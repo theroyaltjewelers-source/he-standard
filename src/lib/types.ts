@@ -99,6 +99,9 @@ export interface Commitment {
   verification: Verification;
   evidence: string | null;
   failure_context: string | null;
+  expected_outcome?: string | null;
+  effort_minutes?: number | null;
+  first_action?: string | null;
 }
 
 export interface CalendarEvent {
@@ -116,12 +119,23 @@ export interface CalendarEvent {
   recurrence: "none" | "daily" | "weekly" | "monthly";
   recurrence_until: string | null;
   plan_confirmed_at: string | null;
+  external_source?: string | null;
+  external_id?: string | null;
+  external_etag?: string | null;
+  external_updated_at?: string | null;
+  sync_status?: "local" | "synced" | "pending_push" | "conflict" | "error";
+  sync_error?: string | null;
+  updated_at?: string;
 }
 
 export interface Reminder {
   id: string;
   user_id: string;
-  entity_type: "task" | "event" | "commitment" | "checkin" | "custom";
+  entity_type: "task" | "event" | "commitment" | "checkin" | "custom" | "prayer" | "habit" | "goal" | "finance" | "weekly_report" | "reflection" | "focus";
+  category: string;
+  follow_up_of: string | null;
+  follow_up_index: number;
+  actions: { action: string; title: string }[];
   entity_id: string | null;
   dedupe_key: string | null;
   title: string;
@@ -145,6 +159,7 @@ export interface JournalEntry {
   tags: string[];
   input_method: "typed" | "voice";
   ai_analysis_allowed: boolean;
+  guided_mode?: string;
   created_at: string;
   updated_at: string;
 }
@@ -172,6 +187,7 @@ export interface AccountabilityAnswer {
   question_key: string;
   question: string;
   answer: string;
+  skipped?: boolean;
   follow_up_question: string | null;
   follow_up_answer: string | null;
   follow_up_source: "rule" | "ai" | null;
@@ -179,11 +195,14 @@ export interface AccountabilityAnswer {
 
 export interface AiMemory {
   id: string;
+  category: "preference" | "long_term_goal" | "commitment" | "routine" | "observation" | "difficulty" | "accomplishment" | "reflection" | "hypothesis" | "context";
+  evidence_status: "verified" | "self_reported" | "unverified";
+  sensitive: boolean;
   kind: "verified_fact" | "self_report" | "hypothesis";
   content: string;
   source_type: string | null;
   confidence: "low" | "medium" | "high" | null;
-  status: "active" | "rejected" | "archived";
+  status: "proposed" | "active" | "rejected" | "archived";
   user_edited: boolean;
   created_at: string;
   updated_at: string;
@@ -221,3 +240,95 @@ export const GOAL_AREAS = [
 ] as const;
 
 export const JOURNAL_TAGS = ["stress", "business", "finances", "faith", "relationships", "habits"] as const;
+
+export interface UserPreferences {
+  user_id: string;
+  theme: "dark" | "light" | "system";
+  reminder_intensity: "gentle" | "balanced" | "firm" | "custom";
+  custom_follow_up_minutes: number[];
+  categories: Record<string, { enabled?: boolean; quiet_override?: boolean }>;
+  voice_replies: boolean;
+  haptics: boolean;
+  sounds: boolean;
+  midday_checkin_time: string | null;
+  weekly_report_day: number;
+}
+
+export interface FocusSession {
+  id: string;
+  task_id: string | null;
+  intention: string | null;
+  planned_minutes: number;
+  started_at: string;
+  ends_at: string;
+  ended_at: string | null;
+  status: "active" | "completed" | "abandoned";
+  distractions: { at: string; note: string }[];
+  note: string | null;
+}
+
+export interface ImpulseLog {
+  id: string;
+  kind: "procrastination" | "social_media" | "spending" | "eating" | "romantic_preoccupation" | "anger" | "other";
+  feeling: string | null;
+  trigger_note: string | null;
+  seeking: string | null;
+  consequence: string | null;
+  alternative: string | null;
+  intervention: string | null;
+  outcome: "resisted" | "acted" | "partly" | "unsure" | null;
+  created_at: string;
+}
+
+export interface FinancialEntry {
+  id: string;
+  entry_date: string;
+  kind: "income" | "expense" | "bill" | "debt_payment" | "savings";
+  scope: "personal" | "business";
+  amount: number;
+  category: string | null;
+  description: string | null;
+  discretionary: boolean;
+  due_date: string | null;
+  paid: boolean | null;
+  reflection: string | null;
+}
+
+export interface QuranVerse {
+  id: string;
+  surah: number;
+  ayah: number;
+  surah_name: string | null;
+  arabic: string;
+  translation: string;
+  translator: string;
+  edition: string;
+  topics: string[];
+  source_url: string;
+}
+
+export interface ToolExecution {
+  id: string;
+  conversation_id: string | null;
+  tool: string;
+  input: Record<string, unknown>;
+  status: "awaiting_confirmation" | "executed" | "failed" | "rejected" | "undone" | "expired";
+  requires_confirmation: boolean;
+  confirmation_reason: string | null;
+  summary: string | null;
+  result: unknown;
+  error: string | null;
+  undo: unknown;
+  created_at: string;
+  executed_at: string | null;
+}
+
+export const IMPULSE_KINDS = [
+  { key: "procrastination", label: "Procrastinate" },
+  { key: "social_media", label: "Scroll social media" },
+  { key: "spending", label: "Spend money" },
+  { key: "eating", label: "Eat impulsively" },
+  { key: "romantic_preoccupation", label: "Romantic or sexual preoccupation" },
+  { key: "anger", label: "React in anger" },
+  { key: "other", label: "Something else" },
+] as const;

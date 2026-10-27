@@ -102,16 +102,30 @@ try {
   await go("/checkin/morning");
   await fill("input[name=c1_title]", "Send the revised quote to the Hendricks client");
   await page.$eval("input[name=c1_time]", (el) => (el.value = "23:00"));
+  await fill("input[name=c1_outcome]", "Client has the revised quote PDF");
+  await fill("input[name=c1_effort]", "45");
+  await fill("input[name=c1_obstacle]", "Instagram after lunch");
+  await fill("input[name=c1_first]", "Open last week's quote file");
+  await domClick("button.btn-quiet[type=button]"); // add a second priority
+  await page.waitForSelector("input[name=c2_title]");
   await fill("input[name=c2_title]", "Review October cash flow");
   await page.$eval("input[name=c2_time]", (el) => (el.value = "23:30"));
+  await fill("input[name=c2_outcome]", "Know this month's net and top three expenses");
+  await fill("input[name=c2_first]", "Export the bank CSV");
   await fill("input[name=c2_to]", "Ali");
-  await fill("textarea[name=obstacles]", "Instagram after lunch and walk-in client interruptions in the afternoon");
   await fill("textarea[name=contingency]", "busy");
+  await page.click("input[name=skip_spiritual_intention]");
   await fill("textarea[name=avoid_behavior]", "Scrolling social media before noon");
   await fill("textarea[name=character_plan]", "Tell clients real timelines, wait before replying when irritated, finish the quote before email");
   await fill("input[name=intention]", "Finish what I start before starting anything new.");
   await submit();
   t = await text();
+  if (/Schedule check/.test(t)) {
+    ok(true, "schedule conflicts shown before saving");
+    await page.click("input[name=ack_conflicts]");
+    await submit();
+    t = await text();
+  }
   ok(/need more detail/.test(t), "vague answer is not accepted");
   ok(/What specifically occupied your time|specific/i.test(t), "follow-up question asked respectfully");
   ok((await page.$eval("input[name=c1_title]", (e) => e.value)).includes("Hendricks"), "typed answers preserved after follow-up");
@@ -123,10 +137,12 @@ try {
   ok(page.url().includes("checkin=morning"), "morning check-in recorded", page.url());
   const cs = await q("select * from commitments where user_id=$1 order by promised_by", [user.id]);
   ok(cs.length === 2 && cs[1].made_to === "Ali", "two commitments created with promised-to person");
+  ok(cs[0].expected_outcome?.includes("revised quote") && cs[0].effort_minutes === 45 && cs[0].first_action?.includes("quote file") && cs[0].obstacles?.includes("Instagram"), "priority stores outcome, effort, obstacle and first action");
   const crem = await q("select * from reminders where user_id=$1 and entity_type='commitment'", [user.id]);
-  ok(crem.length === 2, "a reminder was scheduled for each commitment (1 hr before)");
+  ok(crem.length === 4 && crem.filter((r) => r.dedupe_key.includes(":pre:")).length === 2 && crem.filter((r) => r.dedupe_key.includes(":due:")).length === 2, "each commitment gets a reminder 1 hr before and one at the promised time");
   const ans = await q("select a.* from accountability_answers a join accountability_sessions s on s.id=a.session_id where s.user_id=$1", [user.id]);
   ok(ans.length >= 4, `interview answers stored (${ans.length})`);
+  ok(ans.some((a) => a.question_key === "spiritual_intention" && a.skipped === true && a.answer === ""), "skipped question recorded as skipped, not answered");
   const [plan] = await q("select * from daily_plans where user_id=$1", [user.id]);
   ok(plan?.intention?.startsWith("Finish what I start"), "daily intention saved");
   t = await text();
@@ -164,6 +180,8 @@ try {
   ok(prog.length === 1 && prog[0].progress_pct === 10, "goal progress logged");
 
   await go("/goals");
+  ok(page.url().includes("/progress"), "old Goals URL leads to Progress");
+  await go("/rhythm");
   await page.type("input[aria-label=Habit]", "Fajr on time");
   await submit("form:has(input[aria-label=Habit]) button.btn-quiet");
   const [habit] = await q("select * from habits where user_id=$1", [user.id]);
@@ -191,7 +209,8 @@ try {
   const [ev] = await q("select * from events where user_id=$1", [user.id]);
   const evr = await q("select dedupe_key, send_at, title from reminders where entity_id=$1 order by send_at", [ev.id]);
   const keys = evr.map((r) => r.dedupe_key.split(":").pop());
-  ok(["eve", "before-60", "prep", "leave"].every((k) => keys.includes(k)), `appointment reminders: ${keys.join(", ")}`);
+  const beforeEve = Number(new Date().toLocaleString("en-US", { timeZone: "America/New_York", hour: "numeric", hourCycle: "h23" })) < 19;
+  ok([...(beforeEve ? ["eve"] : []), "before-60", "prep", "leave"].every((k) => keys.includes(k)) && (beforeEve || !keys.includes("eve")), `appointment reminders: ${keys.join(", ")} (evening-before heads-up only while 7 PM hasn't passed)`);
   const leave = evr.find((r) => r.dedupe_key.endsWith(":leave"));
   ok(new Date(leave.send_at).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }) === "7:35 PM", "leave-now reminder at 7:35 PM local");
   await go(`/plan?view=month&date=${tomorrow}`);
@@ -254,7 +273,7 @@ try {
   // Try finishing with open commitments
   await page.type("textarea[name=evidence]", "x");
   await submit("form:has(textarea[name=evidence]) button.btn-primary");
-  ok(/Resolve each of today's commitments first/.test(await text()), "cannot finish with unrecorded commitments");
+  ok(/Record each of today's commitments first/.test(await text()), "cannot finish with unrecorded commitments");
   // Kept with evidence
   let chips = await page.$$("li button.chip");
   await chips[0].click();
@@ -275,14 +294,18 @@ try {
   const answers = {
     evidence: "Quote PDF in sent mail at 1:40 and the supplier call notes",
     failure_trigger: "I was busy",
-    discomfort: "Avoided the cash flow review because the numbers felt stressful",
+    chose_instead: "Scrolled Instagram and answered non-urgent texts",
     honest_communication: "Yes, told Ali the review would slip to tomorrow",
     emotions: "Irritated after the vendor call, took a walk before replying",
     money: "Nowhere",
+    consideration: "Stayed late to help a walk-in client choose a band",
+    self_control: "Did not reply to the vendor while irritated",
     distraction_minutes: "About 60 minutes on Instagram",
     change_tomorrow: "Do the cash flow review at 9 AM before opening any apps",
   };
   for (const [k, v] of Object.entries(answers)) await fill(`textarea[name=${k}]`, v);
+  t = await text();
+  ok(/You missed something you promised Ali/.test(t), "adaptive question about the promise to Ali appears");
   await submit("form:has(textarea[name=evidence]) button.btn-primary");
   t = await text();
   ok(/What specifically occupied your time/.test(t), "'I was busy' prompts: what specifically occupied your time?");
@@ -295,7 +318,112 @@ try {
   const [fu] = await q("select follow_up_question, follow_up_answer, follow_up_source from accountability_answers where question_key='failure_trigger' and user_id=$1", [user.id]);
   ok(fu?.follow_up_answer?.includes("walk-in") && fu.follow_up_source === "rule", "follow-up question and answer stored together");
 
+  section("8b. Midday check-in");
+  await go("/checkin/midday");
+  await fill("textarea[name=completed]", "Sent the quote and called the supplier");
+  await fill("textarea[name=outstanding]", "Cash flow review");
+  await fill("textarea[name=distracted_by]", "Nothing");
+  await page.click("input[name=skip_afternoon_change]");
+  await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2" }), domClick("form button.btn-primary")]);
+  ok(page.url().includes("checkin=midday"), "midday check-in recorded (one answer skipped)");
+
+  section("8c. Rhythm: focus and impulse interruption");
+  await go("/rhythm");
+  await domClick("form:has(input[name=minutes]) button.btn-primary");
+  await page.waitForFunction(() => document.body.innerText.includes("I got distracted"), { timeout: 15000 });
+  const [fsess] = await q("select * from focus_sessions where user_id=$1 and status='active'", [user.id]);
+  ok(fsess?.planned_minutes === 25, "25-minute focus session started");
+  await domClick("button.btn-quiet.w-full");
+  await page.waitForSelector("input[name=note][aria-label=Distraction]");
+  await page.type("input[name=note][aria-label=Distraction]", "Checked email");
+  await submit("form:has(input[aria-label=Distraction]) button");
+  await page.waitForFunction(() => document.body.innerText.includes("1 distraction logged"), { timeout: 10000 }).catch(() => {});
+  await submit("button[name=status][value=completed]");
+  const [fs2] = await q("select status, distractions from focus_sessions where id=$1", [fsess.id]);
+  ok(fs2.status === "completed" && fs2.distractions.length === 1 && fs2.distractions[0].note === "Checked email", "focus session completed with one distraction logged");
+  await go("/rhythm");
+  await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent.includes("I feel an urge"))?.click());
+  await page.evaluate(() => [...document.querySelectorAll("button.chip")].find((b) => b.textContent.includes("Scroll social media"))?.click());
+  await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent.includes("Pause 60 seconds"))?.click());
+  await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent.includes("ready now"))?.click());
+  await page.waitForSelector("input[name=alternative]");
+  await page.type("input[name=feeling]", "Restless");
+  await page.type("input[name=alternative]", "Ten minutes on the cash flow sheet");
+  await submit("form:has(input[name=alternative]) button.btn-primary");
+  await page.waitForFunction(() => document.body.innerText.includes("Recorded. Go do the alternative"), { timeout: 10000 });
+  const [imp] = await q("select * from impulse_logs where user_id=$1", [user.id]);
+  ok(imp?.kind === "social_media" && imp.intervention === "pause" && imp.alternative.includes("cash flow") && imp.outcome === null, "urge, intervention and alternative recorded; outcome left for later");
+  await go("/rhythm");
+  await submit("form:has(input[name=id]) button[value=resisted]");
+  const [imp2] = await q("select outcome from impulse_logs where id=$1", [imp.id]);
+  ok(imp2.outcome === "resisted", "outcome recorded honestly afterwards");
+
+  section("8d. Money");
+  await go("/money");
+  await page.type("input[name=amount]", "42.50");
+  await page.type("input[name=description]", "Takeout lunch");
+  await page.click("input[name=discretionary]");
+  await submit("form:has(input[name=amount]) button.btn-primary");
+  const [fe] = await q("select * from financial_entries where user_id=$1", [user.id]);
+  ok(fe && Number(fe.amount) === 42.5 && fe.kind === "expense" && fe.discretionary === true, "discretionary expense recorded");
+  ok(/\$42\.50/.test(await text()), "money page totals the entry");
+
+  section("8e. Guided reflection and calendar");
+  await go("/journal/new?mode=after_slip");
+  const guidedAreas = await page.$$("form label textarea");
+  await guidedAreas[0].type("Planned the cash flow review at 2 PM; scrolled instead");
+  await guidedAreas[1].type("At the counter after the vendor call, irritated");
+  await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2" }), domClick("form button.btn-primary")]);
+  const [gj] = await q("select guided_mode, body from journal_entries where user_id=$1 and guided_mode<>'free'", [user.id]);
+  ok(gj?.guided_mode === "after_slip" && gj.body.includes("What did I intend to do") && gj.body.includes("scrolled instead") && !gj.body.includes("What will I put in place"), "guided entry saves answered prompts only");
+  t = await text();
+  ok(/Turn on AI analysis in Settings/.test(t), "Reflect Deeper is consent-gated (AI analysis off)");
+  await go("/journal?view=calendar");
+  ok((await page.$$("a span.bg-emerald")).length >= 1, "calendar view marks days with entries");
+
+  section("8f. Progress and weekly report");
+  await go("/progress");
+  await submit("form button[name=week][value=this]");
+  const [wr] = await q("select * from weekly_reports where user_id=$1", [user.id]);
+  ok(!!wr && wr.sample && wr.metrics?.commitments?.made === 2, "weekly report generated from records", JSON.stringify(wr?.sample));
+  t = await text();
+  ok(/Where Your Actions Matched Your Values/.test(t) && /Where Your Actions Did Not Match Your Intentions/.test(t), "report shows both sections");
+  ok(/Based on/.test(t), "report states its sample size");
+  ok(/Not kept|Review October cash flow|never recorded|Missed|did not/i.test(t), "shortfall listed under intentions");
+
+  section("8g. Memory approval and preferences");
+  const [pm] = await q("insert into ai_memory(user_id,kind,category,evidence_status,content,status,source_type) values($1,'hypothesis','difficulty','unverified','Afternoons after vendor calls are when scrolling starts','proposed','conversation') returning id", [user.id]);
+  await q("insert into ai_memory_sources(user_id,memory_id,source_type,excerpt) values($1,$2,'conversation','I always scroll after those vendor calls')", [user.id, pm.id]);
+  await go("/today");
+  ok(/proposed 1 thing to remember/.test(await text()), "Today surfaces the pending memory");
+  await go("/settings/memory");
+  t = await text();
+  ok(/Waiting for your approval/.test(t) && /Where this came from/.test(t), "proposed memory shown with its source");
+  await submit("form:has(input[value=active]) button");
+  const [pm2] = await q("select status from ai_memory where id=$1", [pm.id]);
+  ok(pm2.status === "active", "memory kept only after approval");
+  const [al] = await q("select action from audit_logs where user_id=$1 and entity_id=$2", [user.id, pm.id]);
+  ok(al?.action === "memory.approved", "approval written to the audit log");
+  await go("/settings");
+  await page.click("input[name=theme][value=light]");
+  await page.click("input[name=reminder_intensity][value=firm]");
+  await page.click("input[name=cat_finance]");
+  await submit("form:has(input[name=reminder_intensity]) button.btn-primary");
+  const [prefs] = await q("select * from user_preferences where user_id=$1", [user.id]);
+  ok(prefs.theme === "light" && prefs.reminder_intensity === "firm" && prefs.categories.finance.enabled === false, "preferences saved (theme, intensity, categories)");
+  await go("/today");
+  ok((await page.$eval("html", (h) => h.dataset.theme)) === "light", "light theme applied across the app");
+  await go("/settings/calendar");
+  t = await text();
+  ok(/Google Calendar/.test(t) && (/Connect Google Calendar/.test(t) || /isn't set up on the server yet/.test(t)), "calendar settings show connection state honestly");
+  await go("/settings/activity");
+  ok(/memory approved/.test(await text()), "activity log lists the approval");
+  await go("/word");
+  t = await text();
+  ok(/My Word/.test(t) && /Your record, last 14 days/.test(t), "My Word page renders");
+
   section("9. Integrity score");
+  await go("/today");
   t = await text();
   const m = t.match(/Daily integrity\s*\n?\s*(\d+)/);
   ok(!!m, `score displayed: ${m?.[1]}`);
@@ -317,7 +445,7 @@ try {
   ok(!html.includes(env.SUPABASE_SERVICE_ROLE_KEY) && !html.includes((await q("select value from app_config where key='vapid_private_key'"))[0].value) && !html.includes(CRON), "no server secrets in page HTML");
   const exp = await fetch(`${APP}/api/export`, { headers: { Cookie: cookies } });
   const data = await exp.json();
-  ok(exp.ok && data.journal_entries.length === 1 && data.commitments.length === 2 && data.goals.length === 1 && data.accountability_answers.length > 5, "export contains journal, commitments, goals, answers");
+  ok(exp.ok && data.journal_entries.length === 2 && data.commitments.length === 2 && data.goals.length === 1 && data.accountability_answers.length > 5, "export contains journal, commitments, goals, answers");
   ok(/attachment/.test(exp.headers.get("content-disposition")), "export downloads as a file");
   ok(!JSON.stringify(data).includes(pub), "export omits device push keys");
 
@@ -326,7 +454,7 @@ try {
   await page.type("textarea[name=content][aria-label='New memory']", "Mornings before 10 are my best focus time.");
   await submit("form:has(textarea[aria-label='New memory']) button");
   const mem = await q("select * from ai_memory where user_id=$1", [user.id]);
-  ok(mem.length === 1 && mem[0].kind === "self_report", "memory added and labelled as self-report");
+  ok(mem.length === 2 && mem.some((m) => m.kind === "self_report" && m.evidence_status === "self_reported"), "memory added and labelled as self-report");
 
   await go("/settings");
   await shot("settings");

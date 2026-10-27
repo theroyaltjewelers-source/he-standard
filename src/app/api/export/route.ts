@@ -6,7 +6,10 @@ export const dynamic = "force-dynamic";
 const TABLES = [
   "goals", "goal_progress", "habits", "habit_logs", "tasks", "commitments", "events", "reminders",
   "notifications", "journal_entries", "daily_plans", "accountability_sessions", "accountability_answers",
-  "ai_memory", "ai_observations", "weekly_reviews",
+  "ai_memory", "ai_memory_sources", "ai_observations", "weekly_reports", "goal_milestones",
+  "user_preferences", "prayer_settings", "prayer_confirmations", "spiritual_logs", "verse_reflections",
+  "focus_sessions", "impulse_logs", "financial_entries", "ai_conversations", "ai_messages", "ai_tool_executions",
+  "audit_logs", "calendar_sync_state",
 ] as const;
 
 /** Full export of everything stored about the signed-in user, as JSON. */

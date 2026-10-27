@@ -27,9 +27,44 @@
   --radius-control: 10px;
 }
 
+/* Light theme: warm paper, ink, deeper emerald. Applied by preference or system setting. */
+:root[data-theme="light"] {
+  --color-ground: #efede7;
+  --color-surface: #f8f7f3;
+  --color-surface-2: #e6e3db;
+  --color-line: #d5d1c6;
+  --color-ivory: #1c1d1f;
+  --color-ivory-dim: #514f4a;
+  --color-ivory-faint: #86827a;
+  --color-emerald: #1d6e52;
+  --color-emerald-deep: #d3e6dc;
+  --color-brass: #85601c;
+  --color-brass-deep: #eadcbc;
+  --on-emerald: #f8f7f3;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] {
+    --color-ground: #efede7;
+    --color-surface: #f8f7f3;
+    --color-surface-2: #e6e3db;
+    --color-line: #d5d1c6;
+    --color-ivory: #1c1d1f;
+    --color-ivory-dim: #514f4a;
+    --color-ivory-faint: #86827a;
+    --color-emerald: #1d6e52;
+    --color-emerald-deep: #d3e6dc;
+    --color-brass: #85601c;
+    --color-brass-deep: #eadcbc;
+    --on-emerald: #f8f7f3;
+    color-scheme: light;
+  }
+}
+
 html {
   background: var(--color-ground);
   color-scheme: dark;
+  --on-emerald: #0f1d17;
 }
 
 body {
@@ -123,10 +158,14 @@ body {
   }
   .btn-primary {
     background: var(--color-emerald);
-    color: #0f1d17;
+    color: var(--on-emerald);
   }
   .btn-primary:hover:not(:disabled) {
-    background: #56a88a;
+    filter: brightness(1.08);
+  }
+  .btn:active:not(:disabled),
+  .chip:active {
+    transform: scale(0.98);
   }
   .btn-quiet {
     background: transparent;
@@ -160,6 +199,13 @@ body {
     border-top: 1px solid var(--color-line);
   }
 }
+
+/* One deliberate motion: content settles in when a page opens. */
+@keyframes settle {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.settle { animation: settle 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
 
 @media (prefers-reduced-motion: reduce) {
   *,

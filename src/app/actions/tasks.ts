@@ -12,6 +12,7 @@ export type ActionState = { error?: string; ok?: boolean } | undefined;
 function refresh() {
   revalidatePath("/today");
   revalidatePath("/tasks");
+  revalidatePath("/word");
   revalidatePath("/checkin/evening");
 }
 

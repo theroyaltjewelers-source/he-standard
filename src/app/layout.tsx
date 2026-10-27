@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { cookies } from "next/headers";
 import "@fontsource-variable/newsreader/opsz.css";
 import "@fontsource-variable/newsreader/opsz-italic.css";
 import "@fontsource-variable/hanken-grotesk/index.css";
@@ -14,15 +15,22 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#161719",
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#161719" },
+    { media: "(prefers-color-scheme: light)", color: "#efede7" },
+  ],
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const jar = await cookies();
+  const theme = jar.get("theme")?.value;
+  const haptics = jar.get("haptics")?.value === "off" ? "off" : "on";
+  const t = theme === "light" || theme === "system" ? theme : "dark";
   return (
-    <html lang="en">
+    <html lang="en" data-theme={t} data-haptics={haptics}>
       <body className="min-h-dvh">{children}</body>
     </html>
   );

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { isAuthorizedCron } from "@/lib/api/cron-auth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { planAllUsers } from "@/lib/reminders";
+import { planAllUsers } from "@/lib/jobs";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;

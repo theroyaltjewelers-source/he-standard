@@ -66,7 +66,8 @@ async function save(form: FormData, completeOnboarding: boolean): Promise<FormSt
 
   // Check-in times may have changed: rebuild the upcoming check-in reminders.
   await supabase.from("reminders").delete().eq("entity_type", "checkin").eq("status", "scheduled");
-  const rows = buildCheckinRows({ id: user.id, timezone: d.timezone, morning_checkin_time: d.morning_checkin_time, evening_checkin_time: d.evening_checkin_time });
+  const { data: prefs } = await supabase.from("user_preferences").select("midday_checkin_time").maybeSingle();
+  const rows = buildCheckinRows({ id: user.id, timezone: d.timezone, morning_checkin_time: d.morning_checkin_time, evening_checkin_time: d.evening_checkin_time, midday_checkin_time: prefs?.midday_checkin_time ?? null });
   if (rows.length) await supabase.from("reminders").upsert(rows, { onConflict: "user_id,dedupe_key", ignoreDuplicates: true });
 
   revalidatePath("/", "layout");

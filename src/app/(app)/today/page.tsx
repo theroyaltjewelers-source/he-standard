@@ -4,7 +4,11 @@ import { hijriDate } from "@/lib/hijri";
 import { eventsBetween, integritySeries } from "@/lib/records";
 import { prepPlan } from "@/lib/scheduling";
 import { dayOfWeek, formatClock, formatInZone, formatLocalDate, shiftDate, weekStart } from "@/lib/time";
-import type { Commitment, DailyPlan, Goal, Habit, HabitLog, JournalEntry, Task } from "@/lib/types";
+import type { Commitment, DailyPlan, Goal, Habit, HabitLog, JournalEntry, QuranVerse, Task } from "@/lib/types";
+import { nextPrayer, PRAYERS, PRAYER_LABEL, prayerTimesFor } from "@/lib/prayer";
+import { prayerConfig, type PrayerSettingsRow } from "@/lib/reminders";
+import { pickIndex } from "@/lib/quran";
+import { confirmPrayer } from "@/app/actions/faith";
 import { IntegrityPanel } from "@/components/integrity";
 import { CommitmentItem } from "@/components/commitment-item";
 import { TaskItem } from "@/components/task-item";
@@ -38,6 +42,22 @@ export default async function Today({ searchParams }: PageProps<"/today">) {
     eventsBetween(supabase, today, today, tz),
     integritySeries(supabase, shiftDate(today, -6), today, today),
   ]);
+  const [{ data: prayerSettings }, { data: prayerConf }, { count: verseCount }, { data: prefs }, { count: pendingMemories }] = await Promise.all([
+    supabase.from("prayer_settings").select("*").maybeSingle<PrayerSettingsRow>(),
+    supabase.from("prayer_confirmations").select("prayer").eq("prayer_date", today),
+    supabase.from("quran_verses").select("id", { count: "exact", head: true }),
+    supabase.from("user_preferences").select("midday_checkin_time").maybeSingle(),
+    supabase.from("ai_memory").select("id", { count: "exact", head: true }).eq("status", "proposed"),
+  ]);
+  const pcfg = prayerSettings ? prayerConfig(prayerSettings, tz) : null;
+  const prayerToday = pcfg ? prayerTimesFor(today, pcfg) : null;
+  const upcoming = pcfg ? nextPrayer(today, pcfg, now) : null;
+  const confirmedPrayers = new Set((prayerConf ?? []).map((c) => c.prayer));
+  const awaitingConfirm = prayerToday ? PRAYERS.filter((p) => prayerToday[p] <= now && !confirmedPrayers.has(p)) : [];
+  const { data: verseRows } = verseCount
+    ? await supabase.from("quran_verses").select("*").order("surah").order("ayah").range(pickIndex(today, profile.id, verseCount), pickIndex(today, profile.id, verseCount))
+    : { data: [] };
+  const verse = (verseRows?.[0] ?? null) as QuranVerse | null;
 
   const cs = (commitments.data ?? []) as Commitment[];
   const ts = (tasks.data ?? []) as Task[];
@@ -46,6 +66,8 @@ export default async function Today({ searchParams }: PageProps<"/today">) {
   const logs = (habitLogs.data ?? []) as HabitLog[];
   const morningDone = sessions.data?.some((s) => s.kind === "morning" && s.status === "completed");
   const eveningDone = sessions.data?.some((s) => s.kind === "evening" && s.status === "completed");
+  const middayDone = sessions.data?.some((s) => s.kind === "midday" && s.status === "completed");
+  const middayTime: string | null = prefs ? prefs.midday_checkin_time : "13:00";
   const todayScore = series[series.length - 1].result;
   const dailyPlan = plan.data;
   const latestPct = new Map<string, number>();
@@ -63,18 +85,22 @@ export default async function Today({ searchParams }: PageProps<"/today">) {
   if (lapsed.length) next.push({ text: `${lapsed.length} commitment${lapsed.length > 1 ? "s are" : " is"} past the promised time — record what happened`, href: "#commitments" });
   if (od.length) next.push({ text: `${od.length} overdue task${od.length > 1 ? "s" : ""} from earlier days — finish, move, or mark not done`, href: "#tasks" });
   const stuck = [...ts, ...od].filter((t) => t.status === "pending" && t.postponed_count >= 2);
-  for (const t of stuck.slice(0, 2)) next.push({ text: `“${t.title}” has been postponed ${t.postponed_count} times. What is the obstacle to starting?`, href: "/tasks" });
+  for (const t of stuck.slice(0, 2)) next.push({ text: `“${t.title}” has been postponed ${t.postponed_count} times. What is the obstacle to starting?`, href: "/word" });
   const unconfirmed = events.filter((o) => o.event.importance === "high" && !o.event.plan_confirmed_at && o.start > now);
   for (const o of unconfirmed) next.push({ text: `Confirm your preparation plan for ${o.event.title}`, href: "#schedule" });
+  if (middayTime && !middayDone && morningDone && localHour >= Number(middayTime.slice(0, 2)) && localHour < 17) next.push({ text: "Two-minute midday check-in", href: "/checkin/midday" });
+  if (pendingMemories) next.push({ text: `The Coach proposed ${pendingMemories} thing${pendingMemories > 1 ? "s" : ""} to remember — keep or reject`, href: "/settings/memory" });
   if (!eveningDone && localHour >= 17) next.push({ text: "Complete the evening review", href: "/checkin/evening" });
 
   return (
     <div className="space-y-12">
       <header>
-        <p className="serif text-[1.65rem] leading-tight">{formatLocalDate(today, "EEEE, MMMM d")}</p>
+        <p className="text-ivory-dim">{localHour < 12 ? "Good morning" : localHour < 17 ? "Good afternoon" : "Good evening"}{profile.display_name ? `, ${profile.display_name}` : ""}.</p>
+        <p className="serif mt-1 text-[1.65rem] leading-tight">{formatLocalDate(today, "EEEE, MMMM d")}</p>
         <p className="mt-1 text-ivory-dim">{hijriDate(today, profile.hijri_adjustment_days)}</p>
         {sp.welcome && <p className="mt-4 text-sm text-emerald">You&apos;re set up. Start with the morning check-in.</p>}
         {sp.checkin === "morning" && <p className="mt-4 text-sm text-emerald">Morning commitments recorded. Reminders are set for each.</p>}
+        {sp.checkin === "midday" && <p className="mt-4 text-sm text-emerald">Midday check-in recorded.</p>}
         {sp.checkin === "evening" && <p className="mt-4 text-sm text-emerald">Evening review recorded.</p>}
       </header>
 
@@ -83,10 +109,37 @@ export default async function Today({ searchParams }: PageProps<"/today">) {
       <IntegrityPanel today={todayScore} series={series} />
 
       {/* Accountability status */}
-      <section aria-label="Check-ins" className="grid grid-cols-2 gap-3">
+      <section aria-label="Check-ins" className={`grid gap-3 ${middayTime ? "grid-cols-3" : "grid-cols-2"}`}>
         <CheckinLink href="/checkin/morning" label="Morning" done={!!morningDone} time={formatClock(profile.morning_checkin_time)} />
+        {middayTime && <CheckinLink href="/checkin/midday" label="Midday" done={!!middayDone} time={formatClock(middayTime.slice(0, 5))} />}
         <CheckinLink href="/checkin/evening" label="Evening" done={!!eveningDone} time={formatClock(profile.evening_checkin_time)} />
       </section>
+
+      {pcfg && upcoming && (
+        <section aria-labelledby="pr-h" className="rounded-[14px] border border-line p-4">
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 id="pr-h" className="text-sm text-ivory-dim">Next prayer</h2>
+            <Link href="/faith" className="text-sm text-ivory-dim hover:text-ivory">Faith</Link>
+          </div>
+          <p className="serif mt-1 text-2xl">{PRAYER_LABEL[upcoming.prayer]} <span className="text-ivory-dim">at {formatInZone(upcoming.at, tz, "h:mm a")}{upcoming.date !== today ? " tomorrow" : ""}</span></p>
+          {awaitingConfirm.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-1.5">
+              <span className="mr-1 text-sm text-ivory-faint">Prayed?</span>
+              {awaitingConfirm.map((p) => (
+                <form key={p} action={confirmPrayer}>
+                  <input type="hidden" name="prayer" value={p} />
+                  <input type="hidden" name="date" value={today} />
+                  <button className="chip">{PRAYER_LABEL[p]}</button>
+                </form>
+              ))}
+            </div>
+          )}
+          <p className="mt-2 text-xs text-ivory-faint">{confirmedPrayers.size} of 5 confirmed today. Unconfirmed is never counted as missed.</p>
+        </section>
+      )}
+      {!pcfg && (
+        <Link href="/faith" className="block rounded-[14px] border border-dashed border-line p-4 text-sm text-ivory-dim hover:border-ivory-faint">Set your location on Faith to see prayer times and reminders.</Link>
+      )}
 
       {(dailyPlan?.intention || dailyPlan?.avoid_behavior || dailyPlan?.spiritual_intention) && (
         <section aria-labelledby="intent-h" className="space-y-4 border-l-2 border-emerald pl-5">
@@ -107,7 +160,7 @@ export default async function Today({ searchParams }: PageProps<"/today">) {
               </li>
             ))}
           </ul>
-          <p className="mt-2 text-xs text-ivory-faint">Generated from your records. AI coaching arrives in Phase 2.</p>
+          <p className="mt-2 text-xs text-ivory-faint">Generated from your records. <Link href="/coach" className="text-emerald hover:underline">Talk it through with the Coach</Link>.</p>
         </section>
       )}
 
@@ -172,7 +225,7 @@ export default async function Today({ searchParams }: PageProps<"/today">) {
       <section id="tasks" aria-labelledby="t-h">
         <div className="flex items-baseline justify-between">
           <h2 id="t-h" className="h-section">Checklist</h2>
-          <Link href="/tasks" className="text-sm text-ivory-dim hover:text-ivory">All tasks</Link>
+          <Link href="/word" className="text-sm text-ivory-dim hover:text-ivory">All tasks</Link>
         </div>
         <ul className="mt-1 divide-y divide-line">
           {od.map((t) => <TaskItem key={t.id} t={t} overdue dueLabel={null} tomorrow={today} showDate={`from ${formatLocalDate(t.scheduled_for!, "MMM d")}`} />)}
@@ -189,7 +242,7 @@ export default async function Today({ searchParams }: PageProps<"/today">) {
         <section aria-labelledby="h-h">
           <div className="flex items-baseline justify-between">
             <h2 id="h-h" className="h-section">Habits</h2>
-            <Link href="/goals" className="text-sm text-ivory-dim hover:text-ivory">Manage</Link>
+            <Link href="/rhythm" className="text-sm text-ivory-dim hover:text-ivory">Manage</Link>
           </div>
           <ul className="mt-2 divide-y divide-line">
             {hs.map((h) => {
@@ -218,7 +271,7 @@ export default async function Today({ searchParams }: PageProps<"/today">) {
         <section aria-labelledby="g-h">
           <div className="flex items-baseline justify-between">
             <h2 id="g-h" className="h-section">Goals</h2>
-            <Link href="/goals" className="text-sm text-ivory-dim hover:text-ivory">All goals</Link>
+            <Link href="/progress" className="text-sm text-ivory-dim hover:text-ivory">All goals</Link>
           </div>
           <ul className="mt-3 space-y-4">
             {(goals.data as Goal[]).map((g) => {
@@ -242,9 +295,17 @@ export default async function Today({ searchParams }: PageProps<"/today">) {
         </section>
       )}
 
+      {verse && (
+        <section aria-labelledby="v-h" className="border-l-2 border-brass/70 pl-5">
+          <h2 id="v-h" className="text-sm text-ivory-dim">Verse for today · {verse.surah_name ?? "Surah"} {verse.surah}:{verse.ayah}</h2>
+          <p className="serif mt-2 text-lg leading-relaxed">{verse.translation}</p>
+          <p className="mt-1 text-xs text-ivory-faint">Translation: {verse.translator}. <Link href="/faith#verse" className="text-emerald hover:underline">Arabic and reflection</Link></p>
+        </section>
+      )}
+
       <section aria-labelledby="j-h" className="flex items-center justify-between gap-4 rounded-[14px] border border-line p-5">
         <div>
-          <h2 id="j-h" className="h-section">Journal</h2>
+          <h2 id="j-h" className="h-section">Reflection</h2>
           <p className="text-sm text-ivory-dim">
             {lastEntry.data ? `Last entry ${lastEntry.data.entry_date === today ? "today" : formatLocalDate(lastEntry.data.entry_date, "MMM d")}` : "No entries yet."}
           </p>

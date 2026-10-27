@@ -12,25 +12,32 @@ export interface Question {
 }
 
 export const MORNING_QUESTIONS: Question[] = [
-  // The three commitments + times are collected as structured fields, not free text.
-  { key: "obstacles", text: "What obstacles could prevent you from succeeding today?", hint: "Name them specifically — a person, a time of day, a feeling, a device.", required: true, minWords: 5 },
-  { key: "contingency", text: "What will you do if those obstacles appear?", hint: "If ___ happens, I will ___.", required: true, minWords: 6 },
+  // Each priority's outcome, time, effort, obstacle and first action are structured fields, not free text.
+  { key: "contingency", text: "If those obstacles appear, what will you do?", hint: "If ___ happens, I will ___.", required: true, minWords: 6 },
   { key: "avoid_behavior", text: "What behavior must you intentionally avoid today?", required: true, minWords: 3 },
   { key: "character_plan", text: "How will you demonstrate honesty, patience, and discipline today?", hint: "One concrete action for each is enough.", required: true, minWords: 8 },
   { key: "spiritual_intention", text: "What is your spiritual intention today?", required: false, minWords: 0 },
 ];
 
 export const EVENING_QUESTIONS: Question[] = [
-  // "What did you promise?" and "What did you actually accomplish?" are answered
-  // per commitment/task in the review step. The questions below follow it.
-  { key: "evidence", text: "What specific evidence supports what you completed today?", hint: "Something that exists now that did not exist this morning: a sent message, a file, a receipt, a conversation.", required: true, minWords: 6 },
-  { key: "failure_trigger", text: "For anything you did not honor: what happened immediately before?", hint: "Where were you, what were you doing, what did you feel? If you honored everything, say so.", required: true, minWords: 6 },
-  { key: "discomfort", text: "Did you avoid discomfort or choose immediate gratification today? Where?", required: true, minWords: 4 },
-  { key: "honest_communication", text: "Did you communicate honestly with others today?", hint: "Any promise, excuse, or answer you would rephrase?", required: true, minWords: 4 },
-  { key: "emotions", text: "How did you handle your emotions?", required: true, minWords: 5 },
-  { key: "money", text: "Where did you spend money unnecessarily?", hint: "Amounts if you know them. \"Nowhere\" is a valid answer.", required: true, minWords: 1 },
+  // "Which commitment did you honor / break?" is answered per commitment in the review step above these.
+  { key: "evidence", text: "What specific commitment did you honor today, and what shows it?", hint: "Something that exists now that did not this morning: a sent message, a file, a receipt, a conversation.", required: true, minWords: 6 },
+  { key: "failure_trigger", text: "For anything you did not honor: what were the circumstances?", hint: "Where were you, what were you doing, what did you feel? If you honored everything, say so.", required: true, minWords: 6 },
+  { key: "chose_instead", text: "What did you choose instead?", hint: "The thing you actually did in that time.", required: true, minWords: 3 },
+  { key: "honest_communication", text: "Did you communicate honestly today?", hint: "Any promise, excuse, or answer you would rephrase?", required: true, minWords: 4 },
+  { key: "emotions", text: "How did you handle frustration or excitement?", required: true, minWords: 5 },
+  { key: "money", text: "What did you do for your financial situation today — and where did you spend unnecessarily?", hint: "\"Nothing\" and \"Nowhere\" are valid answers.", required: true, minWords: 1 },
+  { key: "consideration", text: "How did you show consideration for another person?", required: true, minWords: 4 },
+  { key: "self_control", text: "What action today demonstrated self-control?", required: true, minWords: 4 },
   { key: "distraction_minutes", text: "How much time did you lose to distractions?", hint: "An estimate in minutes, and what took it.", required: true, minWords: 2 },
-  { key: "change_tomorrow", text: "What will you change tomorrow?", hint: "One specific change, not a resolution.", required: true, minWords: 6 },
+  { key: "change_tomorrow", text: "What will you do differently tomorrow?", hint: "One specific change, not a resolution.", required: true, minWords: 6 },
+];
+
+export const MIDDAY_QUESTIONS: Question[] = [
+  { key: "completed", text: "What have you completed so far?", required: true, minWords: 2 },
+  { key: "outstanding", text: "What is still outstanding?", required: true, minWords: 2 },
+  { key: "distracted_by", text: "What has distracted you?", hint: "\"Nothing\" is a valid answer.", required: true, minWords: 1 },
+  { key: "afternoon_change", text: "What needs to change this afternoon?", required: true, minWords: 3 },
 ];
 
 const VAGUE_PATTERNS: { re: RegExp; followUp: string }[] = [
@@ -65,7 +72,7 @@ export function checkAnswer(q: Question, raw: string): AnswerCheck {
   if (!answer) return { ok: false, reason: "empty", followUp: "This question needs a written answer." };
 
   // Short honest answers are fine for some questions ("Nowhere", "0").
-  if ((q.key === "money" || q.key === "distraction_minutes" || q.key === "honest_communication") && ACCEPTABLE_SHORT.test(answer)) {
+  if (["money", "distraction_minutes", "honest_communication", "distracted_by"].includes(q.key) && ACCEPTABLE_SHORT.test(answer)) {
     return { ok: true };
   }
 

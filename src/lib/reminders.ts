@@ -3,16 +3,20 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CalendarEvent, Commitment, Profile, Task } from "./types";
 import { eventReminders, occurrences } from "./scheduling";
 import { formatInZone, localDateString, shiftDate, todayIn, zonedToUtc } from "./time";
+import { actionsFor, type Category } from "./reminder-policy";
+import { PRAYERS, PRAYER_LABEL, prayerTimesFor, prayerWindowEnd, type PrayerConfig } from "./prayer";
 
 /**
  * Reminder generation. Every generated reminder has a stable dedupe_key so the
  * planner can run repeatedly without creating duplicates. Editing the source
- * item cancels its future reminders and regenerates them.
+ * item deletes its future reminders and regenerates them.
  */
 
-type Row = {
+export type EntityType = "task" | "event" | "commitment" | "checkin" | "custom" | "prayer" | "habit" | "goal" | "finance" | "weekly_report" | "reflection" | "focus";
+
+export type Row = {
   user_id: string;
-  entity_type: "task" | "event" | "commitment" | "checkin" | "custom";
+  entity_type: EntityType;
   entity_id: string | null;
   dedupe_key: string;
   title: string;
@@ -20,60 +24,45 @@ type Row = {
   url: string;
   send_at: string;
   respect_quiet_hours: boolean;
+  category: Category;
+  actions?: { action: string; title: string }[];
+  follow_up_of?: string | null;
+  follow_up_index?: number;
 };
 
-async function insertRows(db: SupabaseClient, rows: Row[]) {
+export async function insertRows(db: SupabaseClient, rows: Row[]) {
   if (!rows.length) return;
-  const { error } = await db.from("reminders").upsert(rows, { onConflict: "user_id,dedupe_key", ignoreDuplicates: true });
+  const withActions = rows.map((r) => ({ ...r, actions: r.actions ?? actionsFor(r.entity_type) }));
+  const { error } = await db.from("reminders").upsert(withActions, { onConflict: "user_id,dedupe_key", ignoreDuplicates: true });
   if (error) throw new Error(`Could not save reminders: ${error.message}`);
 }
 
-export async function cancelFutureReminders(db: SupabaseClient, entityType: Row["entity_type"], entityId: string) {
+export async function cancelFutureReminders(db: SupabaseClient, entityType: EntityType, entityId: string) {
   // Delete (not just cancel) so regenerated reminders can reuse the dedupe key.
-  const { error } = await db
-    .from("reminders")
-    .delete()
-    .eq("entity_type", entityType)
-    .eq("entity_id", entityId)
-    .eq("status", "scheduled");
+  const { error } = await db.from("reminders").delete().eq("entity_type", entityType).eq("entity_id", entityId).eq("status", "scheduled");
   if (error) throw new Error(`Could not update reminders: ${error.message}`);
 }
 
-/** Horizon for generating occurrences of recurring events. The planner job rolls it forward. */
+/* --------------------------------- events --------------------------------- */
+
 const EVENT_HORIZON_DAYS = 8;
 
 export function buildEventReminderRows(userId: string, ev: CalendarEvent, timeZone: string, now = new Date()): Row[] {
-  const starts = new Date(ev.starts_at);
   const occ = occurrences({
-    startsAt: starts,
-    recurrence: ev.recurrence,
-    until: ev.recurrence_until,
-    timeZone,
-    from: now,
-    to: new Date(now.getTime() + EVENT_HORIZON_DAYS * 864e5),
+    startsAt: new Date(ev.starts_at), recurrence: ev.recurrence, until: ev.recurrence_until, timeZone,
+    from: now, to: new Date(now.getTime() + EVENT_HORIZON_DAYS * 864e5),
   });
   const rows: Row[] = [];
   for (const o of occ) {
     for (const r of eventReminders({
-      title: ev.title,
-      startsAt: o,
-      prepMinutes: ev.prep_minutes,
-      travelMinutes: ev.travel_minutes,
-      offsets: ev.all_day ? [] : ev.reminder_offsets,
-      importance: ev.importance,
-      timeZone,
-      now,
+      title: ev.title, startsAt: o, prepMinutes: ev.prep_minutes, travelMinutes: ev.travel_minutes,
+      offsets: ev.all_day ? [] : ev.reminder_offsets, importance: ev.importance, timeZone, now,
     })) {
       rows.push({
-        user_id: userId,
-        entity_type: "event",
-        entity_id: ev.id,
+        user_id: userId, entity_type: "event", entity_id: ev.id, category: "appointments",
         dedupe_key: `event:${ev.id}:${o.toISOString()}:${r.key}`,
-        title: r.title,
-        body: r.body,
-        url: `/plan?date=${localDateString(o, timeZone)}`,
-        send_at: r.sendAt.toISOString(),
-        respect_quiet_hours: r.respectQuietHours,
+        title: r.title, body: r.body, url: `/plan?date=${localDateString(o, timeZone)}`,
+        send_at: r.sendAt.toISOString(), respect_quiet_hours: r.respectQuietHours,
       });
     }
   }
@@ -85,6 +74,8 @@ export async function syncEventReminders(db: SupabaseClient, userId: string, ev:
   await insertRows(db, buildEventReminderRows(userId, ev, timeZone));
 }
 
+/* ------------------------------ tasks & commitments ------------------------------ */
+
 export async function syncTaskReminders(db: SupabaseClient, userId: string, task: Task, timeZone: string) {
   await cancelFutureReminders(db, "task", task.id);
   if (task.status !== "pending") return;
@@ -93,28 +84,27 @@ export async function syncTaskReminders(db: SupabaseClient, userId: string, task
   if (task.due_at) {
     const due = new Date(task.due_at);
     const before = new Date(due.getTime() - 30 * 60_000);
-    if (before.getTime() > now) {
-      rows.push({
-        user_id: userId, entity_type: "task", entity_id: task.id,
-        dedupe_key: `task:${task.id}:due-30:${task.due_at}`,
-        title: `Due at ${formatInZone(due, timeZone, "h:mm a")}: ${task.title}`,
-        body: "Are you on track to finish it on time?",
-        url: "/tasks", send_at: before.toISOString(), respect_quiet_hours: false,
-      });
-    }
+    if (before.getTime() > now) rows.push({
+      user_id: userId, entity_type: "task", entity_id: task.id, category: "commitments",
+      dedupe_key: `task:${task.id}:pre:${task.due_at}`,
+      title: `Due at ${formatInZone(due, timeZone, "h:mm a")}: ${task.title}`, body: "Are you on track to finish it on time?",
+      url: "/word", send_at: before.toISOString(), respect_quiet_hours: false,
+    });
+    if (due.getTime() > now) rows.push({
+      user_id: userId, entity_type: "task", entity_id: task.id, category: "commitments",
+      dedupe_key: `task:${task.id}:due:${task.due_at}`,
+      title: `Due now: ${task.title}`, body: "Mark it done, or tell me what got in the way.",
+      url: "/word", send_at: due.toISOString(), respect_quiet_hours: false,
+    });
   }
-  // After a second postponement, ask once about the obstacle on the new day.
   if (task.postponed_count >= 2 && task.scheduled_for) {
     const at = zonedToUtc(task.scheduled_for, "10:00", timeZone);
-    if (at.getTime() > now) {
-      rows.push({
-        user_id: userId, entity_type: "task", entity_id: task.id,
-        dedupe_key: `task:${task.id}:postponed:${task.postponed_count}`,
-        title: `Postponed ${task.postponed_count} times: ${task.title}`,
-        body: "What obstacle is preventing you from starting?",
-        url: "/tasks", send_at: at.toISOString(), respect_quiet_hours: true,
-      });
-    }
+    if (at.getTime() > now) rows.push({
+      user_id: userId, entity_type: "task", entity_id: task.id, category: "coaching",
+      dedupe_key: `task:${task.id}:postponed:${task.postponed_count}`,
+      title: `Postponed ${task.postponed_count} times: ${task.title}`, body: "What obstacle is preventing you from starting?",
+      url: "/coach", send_at: at.toISOString(), respect_quiet_hours: true, actions: [],
+    });
   }
   await insertRows(db, rows);
 }
@@ -123,56 +113,126 @@ export async function syncCommitmentReminders(db: SupabaseClient, userId: string
   await cancelFutureReminders(db, "commitment", c.id);
   if (c.status !== "open" || !c.promised_by) return;
   const by = new Date(c.promised_by);
-  const at = new Date(by.getTime() - 60 * 60_000);
-  if (at.getTime() <= Date.now()) return;
-  await insertRows(db, [{
-    user_id: userId, entity_type: "commitment", entity_id: c.id,
-    dedupe_key: `commitment:${c.id}:${c.promised_by}`,
-    title: `${c.title} — by ${formatInZone(by, timeZone, "h:mm a")}`,
-    body: "You committed to this. Are you still on track?",
-    url: "/today", send_at: at.toISOString(), respect_quiet_hours: false,
-  }]);
+  const rows: Row[] = [];
+  const pre = new Date(by.getTime() - 60 * 60_000);
+  if (pre.getTime() > Date.now()) rows.push({
+    user_id: userId, entity_type: "commitment", entity_id: c.id, category: "commitments",
+    dedupe_key: `commitment:${c.id}:pre:${c.promised_by}`,
+    title: `${c.title} — by ${formatInZone(by, timeZone, "h:mm a")}`, body: "You committed to this. Are you still on track?",
+    url: "/today", send_at: pre.toISOString(), respect_quiet_hours: false,
+  });
+  if (by.getTime() > Date.now()) rows.push({
+    user_id: userId, entity_type: "commitment", entity_id: c.id, category: "commitments",
+    dedupe_key: `commitment:${c.id}:due:${c.promised_by}`,
+    title: `Promised time: ${c.title}`, body: "Did you keep it? Record what happened.",
+    url: "/today", send_at: by.toISOString(), respect_quiet_hours: false,
+  });
+  await insertRows(db, rows);
 }
 
-/** Morning and evening check-in prompts for today and tomorrow (local), if still ahead. */
-export function buildCheckinRows(p: Pick<Profile, "id" | "timezone" | "morning_checkin_time" | "evening_checkin_time">, now = new Date()): Row[] {
+/* --------------------------------- check-ins --------------------------------- */
+
+type CheckinProfile = Pick<Profile, "id" | "timezone" | "morning_checkin_time" | "evening_checkin_time"> & { midday_checkin_time?: string | null };
+
+export function buildCheckinRows(p: CheckinProfile, now = new Date()): Row[] {
   const today = todayIn(p.timezone, now);
   const rows: Row[] = [];
+  const kinds: { kind: string; time: string | null | undefined; title: string; body: string }[] = [
+    { kind: "morning", time: p.morning_checkin_time, title: "Morning priorities", body: "Three priorities: outcome, time, effort, obstacle, first action." },
+    { kind: "midday", time: p.midday_checkin_time, title: "Midday check-in", body: "What's done, what's outstanding, what needs to change this afternoon?" },
+    { kind: "evening", time: p.evening_checkin_time, title: "Evening accountability", body: "What you promised, what you did, and what changes tomorrow." },
+  ];
   for (const day of [today, shiftDate(today, 1)]) {
-    const morning = zonedToUtc(day, p.morning_checkin_time.slice(0, 5), p.timezone);
-    const evening = zonedToUtc(day, p.evening_checkin_time.slice(0, 5), p.timezone);
-    if (morning > now) rows.push({
-      user_id: p.id, entity_type: "checkin", entity_id: null, dedupe_key: `checkin:morning:${day}`,
-      title: "Morning commitments",
-      body: "Name today's three commitments and when each will be done.",
-      url: "/checkin/morning", send_at: morning.toISOString(), respect_quiet_hours: false,
-    });
-    if (evening > now) rows.push({
-      user_id: p.id, entity_type: "checkin", entity_id: null, dedupe_key: `checkin:evening:${day}`,
-      title: "Evening accountability",
-      body: "Review what you promised and what you did.",
-      url: "/checkin/evening", send_at: evening.toISOString(), respect_quiet_hours: false,
-    });
+    for (const k of kinds) {
+      if (!k.time) continue;
+      const at = zonedToUtc(day, k.time.slice(0, 5), p.timezone);
+      if (at > now) rows.push({
+        user_id: p.id, entity_type: "checkin", entity_id: null, category: "accountability",
+        dedupe_key: `checkin:${k.kind}:${day}`, title: k.title, body: k.body,
+        url: `/checkin/${k.kind}`, send_at: at.toISOString(), respect_quiet_hours: false, actions: [],
+      });
+    }
   }
   return rows;
 }
 
-/** Planner: run every ~15 minutes with the service-role client. */
-export async function planAllUsers(admin: SupabaseClient, now = new Date()) {
-  const { data: profiles, error } = await admin
-    .from("profiles")
-    .select("id,timezone,morning_checkin_time,evening_checkin_time,onboarding_completed_at")
-    .not("onboarding_completed_at", "is", null);
-  if (error) throw new Error(error.message);
+/* ---------------------------------- prayer ---------------------------------- */
 
-  let created = 0;
-  for (const p of profiles ?? []) {
-    const rows = buildCheckinRows(p, now);
-    // Roll recurring events forward.
-    const { data: events } = await admin.from("events").select("*").eq("user_id", p.id).neq("recurrence", "none");
-    for (const ev of (events ?? []) as CalendarEvent[]) rows.push(...buildEventReminderRows(p.id, ev, p.timezone, now));
-    await insertRows(admin, rows);
-    created += rows.length;
+export interface PrayerSettingsRow {
+  user_id: string;
+  method: string;
+  madhab: "shafi" | "hanafi";
+  high_latitude_rule: PrayerConfig["highLatitudeRule"];
+  offsets: Partial<Record<string, number>>;
+  latitude: number | null;
+  longitude: number | null;
+  location_label: string | null;
+  reminders_enabled: boolean;
+  remind_before_minutes: number;
+  follow_up_minutes: number;
+  pre_next_reminder: boolean;
+  notify_during_quiet: boolean;
+}
+
+export function prayerConfig(s: PrayerSettingsRow, timeZone: string): PrayerConfig | null {
+  if (s.latitude == null || s.longitude == null) return null;
+  return {
+    latitude: s.latitude, longitude: s.longitude, method: s.method, madhab: s.madhab,
+    highLatitudeRule: s.high_latitude_rule, offsets: s.offsets as PrayerConfig["offsets"], timeZone,
+  };
+}
+
+/**
+ * Prayer reminders for today and tomorrow: at the start time (optionally a few
+ * minutes before), a follow-up if unconfirmed, and one more before the window
+ * closes. Dispatch skips any of these once the prayer is confirmed.
+ */
+export function buildPrayerRows(s: PrayerSettingsRow, timeZone: string, now = new Date()): Row[] {
+  const cfg = prayerConfig(s, timeZone);
+  if (!cfg || !s.reminders_enabled) return [];
+  const today = todayIn(timeZone, now);
+  const rows: Row[] = [];
+  for (const day of [today, shiftDate(today, 1)]) {
+    const sched = prayerTimesFor(day, cfg);
+    for (const p of PRAYERS) {
+      const start = sched[p];
+      const end = prayerWindowEnd(p, day, cfg);
+      const label = PRAYER_LABEL[p];
+      const base = { user_id: s.user_id, entity_type: "prayer" as const, entity_id: null, category: "prayer" as const, url: `/faith?date=${day}`, respect_quiet_hours: !s.notify_during_quiet };
+      const at = new Date(start.getTime() - s.remind_before_minutes * 60_000);
+      if (at > now) rows.push({ ...base, dedupe_key: `prayer:${day}:${p}:start`, send_at: at.toISOString(),
+        title: s.remind_before_minutes ? `${label} at ${formatInZone(start, timeZone, "h:mm a")}` : `${label} — ${formatInZone(start, timeZone, "h:mm a")}`,
+        body: `Time for ${label}. Tap Prayed once you have prayed.` });
+      if (s.follow_up_minutes > 0) {
+        const fu = new Date(start.getTime() + s.follow_up_minutes * 60_000);
+        if (fu > now && fu < new Date(end.getTime() - 10 * 60_000)) rows.push({ ...base, dedupe_key: `prayer:${day}:${p}:follow`, send_at: fu.toISOString(),
+          title: `Have you prayed ${label}?`, body: `${label} time continues until ${formatInZone(end, timeZone, "h:mm a")}.` });
+      }
+      if (s.pre_next_reminder) {
+        const pre = new Date(end.getTime() - 20 * 60_000);
+        const fuAt = start.getTime() + s.follow_up_minutes * 60_000;
+        if (pre > now && pre.getTime() > fuAt + 15 * 60_000) rows.push({ ...base, dedupe_key: `prayer:${day}:${p}:closing`, send_at: pre.toISOString(),
+          title: `${label} time ends at ${formatInZone(end, timeZone, "h:mm a")}`, body: "Still unconfirmed. Tap Prayed if you already have." });
+      }
+    }
   }
-  return { users: profiles?.length ?? 0, considered: created };
+  return rows;
+}
+
+export async function regeneratePrayerReminders(db: SupabaseClient, s: PrayerSettingsRow, timeZone: string) {
+  await db.from("reminders").delete().eq("user_id", s.user_id).eq("entity_type", "prayer").eq("status", "scheduled");
+  await insertRows(db, buildPrayerRows(s, timeZone));
+}
+
+/** Store the computed schedule (what the app displays and what reminders were built from). */
+export async function savePrayerSchedule(db: SupabaseClient, s: PrayerSettingsRow, timeZone: string, date: string) {
+  const cfg = prayerConfig(s, timeZone);
+  if (!cfg) return null;
+  const t = prayerTimesFor(date, cfg);
+  const times = Object.fromEntries(Object.entries(t).map(([k, v]) => [k, v.toISOString()]));
+  await db.from("prayer_schedules").upsert({
+    user_id: s.user_id, schedule_date: date, times, latitude: cfg.latitude, longitude: cfg.longitude,
+    method: cfg.method, madhab: cfg.madhab, timezone: timeZone, computed_at: new Date().toISOString(),
+  }, { onConflict: "user_id,schedule_date" });
+  return t;
 }

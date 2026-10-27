@@ -204,7 +204,7 @@ async function rest(req, url, claims, body) {
     const values = rows.map((r) => "(" + keys.map((k) => {
       if (!(k in r)) return "default";
       const v = r[k];
-      params.push(v === null ? null : Array.isArray(v) ? v : typeof v === "object" ? JSON.stringify(v) : v);
+      params.push(v === null ? null : /json/.test(types[k]) ? JSON.stringify(v) : Array.isArray(v) ? v : typeof v === "object" ? JSON.stringify(v) : v);
       return `$${params.length}::${types[k]}`;
     }).join(", ") + ")").join(", ");
     let sql = `insert into ${t} (${keys.map(ident).join(", ")}) values ${values}`;
@@ -228,7 +228,7 @@ async function rest(req, url, claims, body) {
     for (const k of keys) if (!types[k]) throw httpErr(400, `column ${k} does not exist`, "PGRST204");
     const sets = keys.map((k) => {
       const v = body[k];
-      params.push(v === null ? null : Array.isArray(v) ? v : typeof v === "object" ? JSON.stringify(v) : v);
+      params.push(v === null ? null : /json/.test(types[k]) ? JSON.stringify(v) : Array.isArray(v) ? v : typeof v === "object" ? JSON.stringify(v) : v);
       return `${ident(k)} = $${params.length}::${types[k]}`;
     });
     const w = where(table, url, params, types);

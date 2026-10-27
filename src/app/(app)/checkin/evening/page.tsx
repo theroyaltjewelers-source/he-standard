@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/page-header";
 import { CommitmentItem } from "@/components/commitment-item";
 import { TaskItem } from "@/components/task-item";
 import type { AccountabilityAnswer, Commitment, Task } from "@/lib/types";
+import { adaptiveEveningQuestions } from "@/lib/adaptive";
 import { EveningForm } from "./form";
 
 export const metadata = { title: "Evening review" };
@@ -24,8 +25,10 @@ export default async function Evening() {
   const initial: Record<string, string> = {};
   for (const a of (answers ?? []) as AccountabilityAnswer[]) {
     initial[a.question_key] = a.answer;
+    if (a.skipped) initial[`skip_${a.question_key}`] = "on";
     if (a.follow_up_answer) initial[`fu_${a.question_key}`] = a.follow_up_answer;
   }
+  const adaptive = await adaptiveEveningQuestions(supabase, today);
   const commitments = (cs ?? []) as Commitment[];
   const tasks = (ts ?? []) as Task[];
   const open = commitments.filter((c) => c.status === "open").length;
@@ -64,7 +67,7 @@ export default async function Evening() {
       {session?.status === "completed" && (
         <p className="mb-8 rounded-[10px] bg-surface px-4 py-3 text-sm text-ivory-dim">Completed today. You can revise your answers below.</p>
       )}
-      <EveningForm initial={initial} openCommitments={open} />
+      <EveningForm initial={initial} openCommitments={open} adaptive={adaptive} />
     </>
   );
 }

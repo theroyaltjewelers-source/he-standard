@@ -15,7 +15,7 @@ export async function addMemory(_: DataState, form: FormData): Promise<DataState
   const content = s(form, "content");
   if (content.length < 3) return { error: "Write the fact you want the coach to know." };
   const { error } = await supabase.from("ai_memory").insert({
-    user_id: user.id, kind: "self_report", content, source_type: "user", user_edited: true,
+    user_id: user.id, kind: "self_report", evidence_status: "self_reported", content, source_type: "user", user_edited: true,
   });
   if (error) return { error: error.message };
   revalidatePath("/settings/memory");
@@ -34,7 +34,8 @@ export async function setMemoryStatus(form: FormData) {
   const { supabase } = await requireUser();
   const status = s(form, "status");
   if (!["active", "rejected", "archived"].includes(status)) return;
-  await supabase.from("ai_memory").update({ status }).eq("id", s(form, "id"));
+  const { data } = await supabase.from("ai_memory").update({ status }).eq("id", s(form, "id")).select("id,user_id,status").maybeSingle();
+  if (data) await createAdminClient().from("audit_logs").insert({ user_id: data.user_id, actor: "user", action: `memory.${status === "active" ? "approved" : status}`, entity_type: "ai_memory", entity_id: data.id });
   revalidatePath("/settings/memory");
 }
 
@@ -57,7 +58,10 @@ export async function deleteAllMemory(form: FormData) {
 const CONTENT_TABLES = [
   "notifications", "reminders", "accountability_answers", "accountability_sessions", "daily_plans",
   "journal_entries", "commitments", "habit_logs", "habits", "tasks", "goal_progress", "goals", "events",
-  "ai_memory", "ai_observations", "weekly_reviews",
+  "ai_memory_sources", "ai_memory", "ai_observations", "weekly_reports",
+  "goal_milestones", "prayer_confirmations", "prayer_schedules", "spiritual_logs", "verse_reflections",
+  "focus_sessions", "impulse_logs", "financial_entries", "ai_tool_executions", "ai_messages", "ai_conversations",
+  "calendar_sync_state", "audit_logs",
 ] as const;
 
 /** Removes every record but keeps the account and settings. */

@@ -76,3 +76,25 @@ function SevenDay({ series }: { series: { date: string; result: IntegrityResult 
     </figure>
   );
 }
+
+/** Four-week record as bars; days with nothing scheduled are shown as gaps, not zeros. */
+export function IntegritySeries({ data }: { data: { date: string; result: IntegrityResult }[] }) {
+  const scored = data.filter((d) => d.result.score !== null);
+  const avg = scored.length ? Math.round(scored.reduce((n, d) => n + (d.result.score ?? 0), 0) / scored.length) : null;
+  return (
+    <div>
+      <div className="flex h-24 items-end gap-[3px]" role="img" aria-label={`Integrity over ${data.length} days${avg != null ? `, average ${avg}` : ""}`}>
+        {data.map((d) => (
+          <div key={d.date} className="flex h-full flex-1 items-end" title={`${formatLocalDate(d.date, "MMM d")}: ${d.result.score ?? "nothing scheduled"}`}>
+            {d.result.score === null
+              ? <div className="h-[2px] w-full rounded-full bg-line" />
+              : <div className={`w-full rounded-t-[2px] ${d.result.score >= 70 ? "bg-emerald" : "bg-brass"} ${d.result.provisional ? "opacity-50" : ""}`} style={{ height: `${Math.max(4, d.result.score)}%` }} />}
+          </div>
+        ))}
+      </div>
+      <p className="mt-2 text-sm text-ivory-faint">
+        {avg != null ? `Average ${avg} across ${scored.length} scored days.` : "No scored days yet."} Grey dashes are days with nothing scheduled.
+      </p>
+    </div>
+  );
+}

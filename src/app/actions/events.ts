@@ -5,6 +5,8 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireUser } from "@/lib/session";
 import { cancelFutureReminders, syncEventReminders } from "@/lib/reminders";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { deleteRemote, isConnected, pushEvent } from "@/lib/google";
 import { zonedToUtc } from "@/lib/time";
 import type { CalendarEvent } from "@/lib/types";
 
@@ -52,6 +54,7 @@ export async function saveEvent(_: EventState, form: FormData): Promise<EventSta
     reminder_offsets: d.all_day ? [] : d.offsets, recurrence: d.recurrence,
     recurrence_until: d.recurrence !== "none" && d.recurrence_until ? d.recurrence_until : null,
     plan_confirmed_at: d.confirm_plan ? new Date().toISOString() : null,
+    ...(d.id ? { sync_status: "pending_push" } : {}),
   };
   const q = d.id
     ? supabase.from("events").update(row).eq("id", d.id).select("*").single<CalendarEvent>()
@@ -59,14 +62,26 @@ export async function saveEvent(_: EventState, form: FormData): Promise<EventSta
   const { data, error } = await q;
   if (error) return { error: error.message };
   await syncEventReminders(supabase, user.id, data, profile.timezone);
+  const admin = createAdminClient();
+  let googleError: string | null = null;
+  if (await isConnected(admin, user.id)) {
+    try { await pushEvent(admin, user.id, data, profile.timezone); }
+    catch (e) { googleError = (e as Error).message; }
+  }
+  await admin.from("audit_logs").insert({ user_id: user.id, actor: "user", action: d.id ? "event.updated" : "event.created", entity_type: "event", entity_id: data.id, detail: { title: data.title, google_error: googleError } });
   revalidatePath("/plan");
   revalidatePath("/today");
-  redirect(`/plan?date=${d.date}`);
+  redirect(`/plan?date=${d.date}${googleError ? `&gerror=${encodeURIComponent(googleError.slice(0, 120))}` : ""}`);
 }
 
 export async function deleteEvent(form: FormData) {
   const { supabase } = await requireUser();
   const id = s(form, "id");
+  const { data: ev } = await supabase.from("events").select("external_source,external_id,user_id").eq("id", id).maybeSingle();
+  if (ev?.external_source === "google" && ev.external_id) {
+    const admin = createAdminClient();
+    if (await isConnected(admin, ev.user_id)) { try { await deleteRemote(admin, ev.user_id, ev.external_id); } catch { /* local delete continues */ } }
+  }
   await cancelFutureReminders(supabase, "event", id);
   await supabase.from("events").delete().eq("id", id);
   revalidatePath("/plan");

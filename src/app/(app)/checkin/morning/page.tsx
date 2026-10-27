@@ -22,9 +22,14 @@ export default async function Morning() {
     initial[`c${i + 1}_title`] = c.title;
     initial[`c${i + 1}_time`] = c.promised_by ? formatInZone(c.promised_by, profile.timezone, "HH:mm") : "";
     initial[`c${i + 1}_to`] = c.made_to === "self" ? "" : c.made_to;
+    initial[`c${i + 1}_outcome`] = c.expected_outcome ?? "";
+    initial[`c${i + 1}_effort`] = c.effort_minutes ? String(c.effort_minutes) : "";
+    initial[`c${i + 1}_obstacle`] = c.obstacles ?? "";
+    initial[`c${i + 1}_first`] = c.first_action ?? "";
   });
   for (const a of (answers ?? []) as AccountabilityAnswer[]) {
     initial[a.question_key] = a.answer;
+    if (a.skipped) initial[`skip_${a.question_key}`] = "on";
     if (a.follow_up_answer) initial[`fu_${a.question_key}`] = a.follow_up_answer;
   }
   const kept = (cs as Commitment[] | null)?.filter((c) => c.status !== "open").length ?? 0;

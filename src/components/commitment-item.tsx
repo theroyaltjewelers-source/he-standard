@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useState, type ReactNode } from "react";
 import { resolveCommitment, type ActionState } from "@/app/actions/tasks";
 import type { Commitment } from "@/lib/types";
 
@@ -8,7 +8,7 @@ const LABEL: Record<Commitment["status"], string> = {
   open: "Open", kept: "Kept", kept_late: "Kept late", broken: "Not kept", released: "Released",
 };
 
-export function CommitmentItem({ c, time, overdue }: { c: Commitment; time: string | null; overdue: boolean }) {
+export function CommitmentItem({ c, time, overdue, children }: { c: Commitment; time: string | null; overdue: boolean; children?: ReactNode }) {
   const [mode, setMode] = useState<null | "kept" | "kept_late" | "broken" | "released">(null);
   const [state, action, pending] = useActionState<ActionState, FormData>(async (p, f) => {
     const r = await resolveCommitment(p, f);
@@ -34,6 +34,7 @@ export function CommitmentItem({ c, time, overdue }: { c: Commitment; time: stri
           </p>
           {c.evidence && <p className="mt-1 text-sm text-ivory-dim">Evidence: {c.evidence}</p>}
           {c.failure_context && <p className="mt-1 text-sm text-ivory-dim">Before it slipped: {c.failure_context}</p>}
+          {children}
         </div>
       </div>
 

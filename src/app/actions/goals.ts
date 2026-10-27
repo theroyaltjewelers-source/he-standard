@@ -36,6 +36,8 @@ export async function saveGoal(_: GoalState, form: FormData): Promise<GoalState>
     : await supabase.from("goals").insert(row).select("id").single();
   if (error) return { error: error.message };
   revalidatePath("/goals");
+  revalidatePath("/progress");
+  revalidatePath("/rhythm");
   revalidatePath("/today");
   redirect(`/goals/${data.id}`);
 }
@@ -46,6 +48,8 @@ export async function setGoalStatus(form: FormData) {
   if (!["active", "paused", "achieved", "abandoned"].includes(status)) return;
   await supabase.from("goals").update({ status }).eq("id", s(form, "id"));
   revalidatePath("/goals");
+  revalidatePath("/progress");
+  revalidatePath("/rhythm");
   revalidatePath(`/goals/${s(form, "id")}`);
 }
 
@@ -53,6 +57,8 @@ export async function deleteGoal(form: FormData) {
   const { supabase } = await requireUser();
   await supabase.from("goals").delete().eq("id", s(form, "id"));
   revalidatePath("/goals");
+  revalidatePath("/progress");
+  revalidatePath("/rhythm");
   redirect("/goals");
 }
 
@@ -85,6 +91,8 @@ export async function createHabit(_: GoalState, form: FormData): Promise<GoalSta
   });
   if (error) return { error: error.message };
   revalidatePath("/goals");
+  revalidatePath("/progress");
+  revalidatePath("/rhythm");
   revalidatePath("/today");
   return { ok: true };
 }
@@ -101,11 +109,15 @@ export async function logHabit(form: FormData) {
   }
   revalidatePath("/today");
   revalidatePath("/goals");
+  revalidatePath("/progress");
+  revalidatePath("/rhythm");
 }
 
 export async function archiveHabit(form: FormData) {
   const { supabase } = await requireUser();
   await supabase.from("habits").update({ active: s(form, "active") === "true" }).eq("id", s(form, "id"));
   revalidatePath("/goals");
+  revalidatePath("/progress");
+  revalidatePath("/rhythm");
   revalidatePath("/today");
 }

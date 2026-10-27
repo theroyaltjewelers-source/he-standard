@@ -3,6 +3,7 @@
 import { useActionState, useRef, useState, useSyncExternalStore } from "react";
 import { saveJournal, type JournalState } from "@/app/actions/journal";
 import { JOURNAL_TAGS, type JournalEntry } from "@/lib/types";
+import { GUIDED_MODES, composeGuided, type GuidedMode } from "@/lib/reflection";
 
 const PROMPTS = [
   "What did you avoid today, and what did avoiding it cost?",
@@ -19,9 +20,14 @@ type SR = { start(): void; stop(): void; continuous: boolean; interimResults: bo
   onresult: ((e: { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null;
   onend: (() => void) | null; onerror: ((e: { error: string }) => void) | null };
 
-export function JournalForm({ entry, today }: { entry?: JournalEntry; today: string }) {
+export function JournalForm({ entry, today, initialMode }: { entry?: JournalEntry; today: string; initialMode?: GuidedMode }) {
   const [state, action, pending] = useActionState<JournalState, FormData>(saveJournal, undefined);
   const [body, setBody] = useState(entry?.body ?? "");
+  const [mode, setMode] = useState<GuidedMode>((entry?.guided_mode as GuidedMode) ?? initialMode ?? "free");
+  const [answers, setAnswers] = useState<string[]>([]);
+  const guided = !entry && mode !== "free";
+  const modeDef = GUIDED_MODES.find((m) => m.key === mode)!;
+  const finalBody = guided ? composeGuided(mode, answers, body) : body;
   const [voiceUsed, setVoiceUsed] = useState(entry?.input_method === "voice");
   const [listening, setListening] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
@@ -57,21 +63,38 @@ export function JournalForm({ entry, today }: { entry?: JournalEntry; today: str
     <form action={action} className="space-y-6">
       {entry && <input type="hidden" name="id" value={entry.id} />}
       <input type="hidden" name="input_method" value={voiceUsed ? "voice" : "typed"} />
+      <input type="hidden" name="guided_mode" value={mode} />
+      {!entry && (
+        <fieldset>
+          <legend className="label">Mode</legend>
+          <div className="flex flex-wrap gap-2">
+            {GUIDED_MODES.map((m) => <button type="button" key={m.key} className="chip" data-on={mode === m.key} onClick={() => setMode(m.key)}>{m.label}</button>)}
+          </div>
+          {mode !== "free" && <p className="mt-2 text-sm text-ivory-faint">{modeDef.desc} Answer any you like; skip the rest.</p>}
+        </fieldset>
+      )}
       <div className="grid grid-cols-[1fr_auto] gap-3">
         <input name="title" defaultValue={entry?.title ?? ""} className="field serif" placeholder="Title (optional)" maxLength={200} aria-label="Title" />
         <input type="date" name="entry_date" defaultValue={entry?.entry_date ?? today} className="field" aria-label="Date" />
       </div>
-      {prompt && <p className="serif border-l-2 border-emerald pl-4 text-lg text-ivory-dim italic">{prompt}</p>}
-      <textarea name="body" value={body} onChange={(e) => setBody(e.target.value)} required className="field min-h-72" aria-label="Entry" placeholder="Write freely." />
+      {guided && modeDef.prompts.map((p, i) => (
+        <label key={p} className="block">
+          <span className="serif mb-2 block text-lg leading-snug">{p}</span>
+          <textarea value={answers[i] ?? ""} onChange={(e) => setAnswers((a) => { const n = [...a]; n[i] = e.target.value; return n; })} className="field min-h-24" />
+        </label>
+      ))}
+      {!guided && prompt && <p className="serif border-l-2 border-emerald pl-4 text-lg text-ivory-dim italic">{prompt}</p>}
+      {guided && <input type="hidden" name="body" value={finalBody} />}
+      <textarea name={guided ? undefined : "body"} value={body} onChange={(e) => setBody(e.target.value)} required={!guided} className={`field ${guided ? "min-h-28" : "min-h-72"}`} aria-label={guided ? "Anything else" : "Entry"} placeholder={guided ? "Anything else (optional)" : "Write freely."} />
       <div className="flex flex-wrap items-center gap-3 text-sm">
         {supported && (
           <button type="button" onClick={toggleVoice} className={`btn ${listening ? "btn-primary" : "btn-quiet"}`} aria-pressed={listening}>
             {listening ? "Stop dictation" : "Dictate"}
           </button>
         )}
-        <button type="button" className="text-ivory-dim hover:text-ivory" onClick={() => setPrompt(PROMPTS[(PROMPTS.indexOf(prompt ?? "") + 1) % PROMPTS.length])}>
+        {!guided && <button type="button" className="text-ivory-dim hover:text-ivory" onClick={() => setPrompt(PROMPTS[(PROMPTS.indexOf(prompt ?? "") + 1) % PROMPTS.length])}>
           {prompt ? "Another prompt" : "Give me a prompt"}
-        </button>
+        </button>}
         {voiceError && <span className="text-brass">{voiceError}</span>}
         {listening && <span className="text-emerald">Listening — speech is transcribed by your browser.</span>}
       </div>
@@ -98,7 +121,7 @@ export function JournalForm({ entry, today }: { entry?: JournalEntry; today: str
       </label>
 
       {state?.error && <p role="alert" className="text-brass">{state.error}</p>}
-      <button className="btn btn-primary w-full" disabled={pending}>{pending ? "Saving…" : "Save entry"}</button>
+      <button className="btn btn-primary w-full" disabled={pending || (guided && !finalBody)}>{pending ? "Saving…" : "Save entry"}</button>
     </form>
   );
 }
