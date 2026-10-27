@@ -2,14 +2,16 @@ import "server-only";
 import webpush from "web-push";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { env } from "./env";
+import { getVapidKeys } from "./app-config";
 import type { Profile, Reminder } from "./types";
 import { inQuietHours, quietHoursEnd } from "./scheduling";
 import { localDateString } from "./time";
 
 let configured = false;
-function configure() {
+async function configure() {
   if (configured) return;
-  webpush.setVapidDetails(env.vapidSubject(), env.vapidPublicKey(), env.vapidPrivateKey());
+  const k = await getVapidKeys();
+  webpush.setVapidDetails(env.vapidSubject(), k.publicKey, k.privateKey);
   configured = true;
 }
 
@@ -40,7 +42,7 @@ export async function sendPushToUser(
   userId: string,
   msg: { title: string; body?: string | null; url?: string; reminderId?: string | null },
 ): Promise<SendResult> {
-  configure();
+  await configure();
   const { data: subs, error } = await admin
     .from("push_subscriptions")
     .select("id,endpoint,p256dh,auth,failure_count")

@@ -15,6 +15,9 @@ const env = Object.fromEntries(fs.readFileSync(new URL("../../.env.local", impor
 const db = new pg.Pool({ host: "127.0.0.1", port: 54322, user: "postgres", database: "standard" });
 const q = async (sql, p = []) => (await db.query(sql, p)).rows;
 
+// Scheduler secret: env override, else the server-managed value in app_config.
+const CRON = env.CRON_SECRET || (await q("select value from app_config where key='cron_secret'"))[0].value;
+
 let passed = 0, failed = 0;
 const ok = (cond, label, extra = "") => {
   if (cond) { passed++; console.log(`  ✓ ${label}`); }
@@ -217,7 +220,7 @@ try {
   const [rem] = await q("insert into reminders(user_id,entity_type,title,body,url,send_at,respect_quiet_hours) values($1,'custom','Review cash flow','You committed to this by 2:00 PM. Are you still on track?','/today', now() - interval '1 minute', false) returning id", [user.id]);
   const unauth = await fetch(`${APP}/api/cron/dispatch`, { method: "POST" });
   ok(unauth.status === 401, "dispatcher rejects calls without the cron secret");
-  const d = await (await fetch(`${APP}/api/cron/dispatch`, { method: "POST", headers: { Authorization: `Bearer ${env.CRON_SECRET}` } })).json();
+  const d = await (await fetch(`${APP}/api/cron/dispatch`, { method: "POST", headers: { Authorization: `Bearer ${CRON}` } })).json();
   ok(d.ok && d.sent >= 1, `dispatcher sent due reminder ${JSON.stringify(d)}`);
   const got = received.find((r) => r.payload?.title === "Review cash flow");
   ok(!!got, "push service received an encrypted message, decrypted with the device keys");
@@ -235,10 +238,10 @@ try {
   // Commitment reminder for a resolved commitment should not be sent
   const todayNY = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
   await q("insert into reminders(user_id,entity_type,dedupe_key,title,url,send_at,respect_quiet_hours) values($1,'checkin',$2,'Morning commitments','/checkin/morning', now() - interval '1 minute', false)", [user.id, `checkin:morning:${todayNY}`]);
-  const d2 = await (await fetch(`${APP}/api/cron/dispatch`, { method: "POST", headers: { Authorization: `Bearer ${env.CRON_SECRET}` } })).json();
+  const d2 = await (await fetch(`${APP}/api/cron/dispatch`, { method: "POST", headers: { Authorization: `Bearer ${CRON}` } })).json();
   ok(d2.skipped === 1 && d2.sent === 0, `already-completed morning check-in prompt is not sent ${JSON.stringify(d2)}`);
   // Planner
-  const pl = await (await fetch(`${APP}/api/cron/plan`, { method: "POST", headers: { Authorization: `Bearer ${env.CRON_SECRET}` } })).json();
+  const pl = await (await fetch(`${APP}/api/cron/plan`, { method: "POST", headers: { Authorization: `Bearer ${CRON}` } })).json();
   ok(pl.ok && pl.users >= 1, `planner ran ${JSON.stringify(pl)}`);
   // Reminders page wording
   await go("/reminders");
@@ -311,7 +314,7 @@ try {
   const pa = await peekAnon.json();
   ok(!Array.isArray(pa) || pa.length === 0, "anonymous key reads nothing");
   const html = await (await fetch(`${APP}/today`, { headers: { Cookie: cookies } })).text();
-  ok(!html.includes(env.SUPABASE_SERVICE_ROLE_KEY) && !html.includes(env.VAPID_PRIVATE_KEY), "no server secrets in page HTML");
+  ok(!html.includes(env.SUPABASE_SERVICE_ROLE_KEY) && !html.includes((await q("select value from app_config where key='vapid_private_key'"))[0].value) && !html.includes(CRON), "no server secrets in page HTML");
   const exp = await fetch(`${APP}/api/export`, { headers: { Cookie: cookies } });
   const data = await exp.json();
   ok(exp.ok && data.journal_entries.length === 1 && data.commitments.length === 2 && data.goals.length === 1 && data.accountability_answers.length > 5, "export contains journal, commitments, goals, answers");

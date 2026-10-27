@@ -39,7 +39,7 @@ export function PushToggle({ vapidKey, compact = false }: { vapidKey: string | n
   }, []);
 
   async function enable() {
-    if (!vapidKey) return setMessage("Notifications aren't configured on the server yet (missing VAPID keys — see SETUP.md).");
+    if (!vapidKey) return setMessage("Notifications couldn't be set up on the server. Check that SUPABASE_SERVICE_ROLE_KEY is set in Vercel and the app_config migration has run.");
     setStatus("working");
     setMessage(null);
     try {

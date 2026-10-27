@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 async function handle(req: Request) {
-  if (!isAuthorizedCron(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!(await isAuthorizedCron(req))) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   try {
     const summary = await dispatchDueReminders(createAdminClient());
     return NextResponse.json({ ok: true, at: new Date().toISOString(), ...summary });

@@ -10,6 +10,7 @@ import { CommitmentItem } from "@/components/commitment-item";
 import { TaskItem } from "@/components/task-item";
 import { QuickTask } from "@/components/quick-task";
 import { PushToggle } from "@/components/push-toggle";
+import { getVapidPublicKey } from "@/lib/app-config";
 import { logHabit } from "@/app/actions/goals";
 import { confirmEventPlan } from "@/app/actions/events";
 
@@ -77,7 +78,7 @@ export default async function Today({ searchParams }: PageProps<"/today">) {
         {sp.checkin === "evening" && <p className="mt-4 text-sm text-emerald">Evening review recorded.</p>}
       </header>
 
-      <PushToggle vapidKey={process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? null} compact />
+      <PushToggle vapidKey={await getVapidPublicKey()} compact />
 
       <IntegrityPanel today={todayScore} series={series} />
 

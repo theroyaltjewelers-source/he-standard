@@ -2,6 +2,7 @@ import { requireUser } from "@/lib/session";
 import { formatInZone } from "@/lib/time";
 import { PageHeader } from "@/components/page-header";
 import { PushToggle } from "@/components/push-toggle";
+import { getVapidPublicKey } from "@/lib/app-config";
 import { CustomReminderForm } from "@/components/custom-reminder-form";
 import { cancelReminder, removeDevice } from "@/app/actions/reminders";
 import type { Reminder } from "@/lib/types";
@@ -29,7 +30,6 @@ export default async function Reminders() {
     supabase.from("notifications").select("id,title,status,error,created_at,displayed_at,clicked_at,push_service_status").order("created_at", { ascending: false }).limit(30),
     supabase.from("reminders").select("*").in("status", ["no_device", "failed", "partial"]).order("send_at", { ascending: false }).limit(10),
   ]);
-  const schedulerHealthy = process.env.CRON_SECRET && process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   return (
     <>
@@ -37,8 +37,7 @@ export default async function Reminders() {
 
       <section className="space-y-4">
         <h2 className="h-section">This device</h2>
-        <PushToggle vapidKey={process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? null} />
-        {!schedulerHealthy && <p className="text-sm text-brass">The reminder scheduler isn&apos;t configured on the server yet (see SETUP.md, step 5). Reminders will stay scheduled until it is.</p>}
+        <PushToggle vapidKey={await getVapidPublicKey()} />
       </section>
 
       <section className="mt-12">
