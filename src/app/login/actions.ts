@@ -14,7 +14,9 @@ const creds = z.object({
 
 async function origin() {
   const h = await headers();
-  return process.env.NEXT_PUBLIC_APP_URL || `${h.get("x-forwarded-proto") ?? "https"}://${h.get("host")}`;
+  if (process.env.NEXT_PUBLIC_APP_URL) return process.env.NEXT_PUBLIC_APP_URL;
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  return `${h.get("x-forwarded-proto") ?? "https"}://${h.get("host")}`;
 }
 
 function safeNext(v: FormDataEntryValue | null) {
