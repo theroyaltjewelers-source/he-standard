@@ -1,0 +1,12 @@
+{
+  "name": "the-standard-e2e",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end tests: real PostgreSQL + local stand-in for Supabase REST/Auth + headless Chromium",
+  "dependencies": {
+    "@sparticuz/chromium": "*",
+    "http_ece": "*",
+    "pg": "*",
+    "puppeteer-core": "*"
+  }
+}

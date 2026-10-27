@@ -1,26 +1,171 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+ * THE STANDARD — design tokens
+ * Charcoal ground, warm ivory type, one restrained emerald.
+ * Shortfalls use a muted brass rather than red: the app records misses, it does not scold.
+ */
+@theme {
+  --color-ground: #161719;      /* page */
+  --color-surface: #1e1f22;     /* raised panels */
+  --color-surface-2: #26272b;   /* inputs, pressed */
+  --color-line: #303136;        /* hairlines */
+  --color-ivory: #ece5d5;       /* primary text */
+  --color-ivory-dim: #a9a394;   /* secondary text */
+  --color-ivory-faint: #6f6b62; /* tertiary text */
+  --color-emerald: #4a9a7c;     /* accent: kept, done, primary action */
+  --color-emerald-deep: #1f4a3b;
+  --color-brass: #b8945a;       /* shortfall, attention */
+  --color-brass-deep: #3d3222;
+
+  --font-serif: "Newsreader Variable", "Iowan Old Style", Georgia, serif;
+  --font-sans: "Hanken Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+
+  --text-display: 4.5rem;
+  --text-display--line-height: 1;
+  --radius-panel: 14px;
+  --radius-control: 10px;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  background: var(--color-ground);
+  color-scheme: dark;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-ground);
+  color: var(--color-ivory);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--color-emerald-deep);
+  color: var(--color-ivory);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-emerald);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@layer components {
+  .serif {
+    font-family: var(--font-serif);
+    font-optical-sizing: auto;
+  }
+  .h-page {
+    font-family: var(--font-serif);
+    font-size: 2rem;
+    line-height: 1.15;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+  }
+  .h-section {
+    font-family: var(--font-serif);
+    font-size: 1.25rem;
+    line-height: 1.3;
+    font-weight: 450;
+  }
+  .panel {
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-panel);
+  }
+  .field {
+    width: 100%;
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-control);
+    padding: 0.7rem 0.85rem;
+    color: var(--color-ivory);
+    font-size: 1rem; /* ≥16px prevents iOS zoom */
+  }
+  .field::placeholder {
+    color: var(--color-ivory-faint);
+  }
+  .field:focus {
+    outline: none;
+    border-color: var(--color-emerald);
+  }
+  textarea.field {
+    font-family: var(--font-serif);
+    font-size: 1.075rem;
+    line-height: 1.65;
+    min-height: 7rem;
+    resize: vertical;
+  }
+  .label {
+    display: block;
+    font-size: 0.875rem;
+    color: var(--color-ivory-dim);
+    margin-bottom: 0.4rem;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 44px;
+    padding: 0 1.1rem;
+    border-radius: var(--radius-control);
+    font-weight: 550;
+    font-size: 0.95rem;
+    transition: background-color 120ms, border-color 120ms, opacity 120ms;
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .btn-primary {
+    background: var(--color-emerald);
+    color: #0f1d17;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: #56a88a;
+  }
+  .btn-quiet {
+    background: transparent;
+    border: 1px solid var(--color-line);
+    color: var(--color-ivory);
+  }
+  .btn-quiet:hover:not(:disabled) {
+    border-color: var(--color-ivory-faint);
+  }
+  .btn-danger {
+    background: transparent;
+    border: 1px solid #6b3a2e;
+    color: #d9a08f;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 36px;
+    padding: 0 0.8rem;
+    border-radius: 999px;
+    border: 1px solid var(--color-line);
+    color: var(--color-ivory-dim);
+    font-size: 0.875rem;
+  }
+  .chip[data-on="true"] {
+    border-color: var(--color-emerald);
+    color: var(--color-ivory);
+    background: var(--color-emerald-deep);
+  }
+  .rule {
+    border-top: 1px solid var(--color-line);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

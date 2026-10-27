@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# e2e artifacts
+tests/e2e/node_modules
+tests/e2e/*.png
+tests/e2e/push.key
+tests/e2e/push.crt

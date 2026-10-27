@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>Generate keys · The Standard</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#161719; color:#ece5d5; font:16px/1.55 system-ui, sans-serif; max-width:640px; margin:0 auto; padding:40px 16px; }
+  h1 { font-family: Georgia, serif; font-weight:400; font-size:28px; }
+  p, li { color:#a9a394; }
+  label { display:block; margin:22px 0 6px; color:#ece5d5; font-weight:600; }
+  textarea { width:100%; box-sizing:border-box; background:#26272b; color:#ece5d5; border:1px solid #303136; border-radius:10px; padding:10px; font:14px ui-monospace, monospace; resize:none; }
+  button { background:#4a9a7c; color:#0f1d17; border:0; border-radius:10px; padding:12px 18px; font-weight:600; font-size:15px; margin-top:20px; cursor:pointer; }
+  .warn { border-left:2px solid #b8945a; padding-left:12px; }
+</style>
+</head>
+<body>
+<h1>Generate your private keys</h1>
+<p>These keys are created inside this browser with its built-in cryptography. Nothing on this page is sent anywhere. Copy each value into Vercel → your project → Settings → Environment Variables, under the name shown.</p>
+<p class="warn">Generate them once. If you generate new notification keys later, every device has to turn reminders on again.</p>
+<button id="go">Generate keys</button>
+<div id="out" hidden>
+  <label for="pub">NEXT_PUBLIC_VAPID_PUBLIC_KEY</label><textarea id="pub" rows="3" readonly></textarea>
+  <label for="priv">VAPID_PRIVATE_KEY</label><textarea id="priv" rows="2" readonly></textarea>
+  <label for="cron">CRON_SECRET</label><textarea id="cron" rows="2" readonly></textarea>
+  <p>Keep the private key and cron secret out of messages and documents. They only belong in Vercel (and the cron secret also in the Supabase scheduler step).</p>
+</div>
+<script>
+const b64u = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+document.getElementById("go").onclick = async () => {
+  const kp = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+  const raw = await crypto.subtle.exportKey("raw", kp.publicKey);
+  const jwk = await crypto.subtle.exportKey("jwk", kp.privateKey);
+  document.getElementById("pub").value = b64u(raw);
+  document.getElementById("priv").value = jwk.d;
+  document.getElementById("cron").value = b64u(crypto.getRandomValues(new Uint8Array(32)));
+  document.getElementById("out").hidden = false;
+};
+</script>
+</body>
+</html>

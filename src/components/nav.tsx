@@ -1,0 +1,65 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { IconMore } from "./icons";
+import { PRIMARY, SECONDARY } from "./nav-links";
+
+function isActive(path: string, href: string) {
+  return path === href || path.startsWith(href + "/");
+}
+
+export function Nav() {
+  const path = usePathname();
+  const moreActive = SECONDARY.some((s) => isActive(path, s.href)) || path === "/more";
+  return (
+    <>
+      {/* Desktop rail */}
+      <nav aria-label="Main" className="fixed inset-y-0 left-0 hidden w-60 flex-col border-r border-line px-5 py-8 lg:flex">
+        <Link href="/today" className="serif mb-10 px-3 text-2xl font-light">The Standard</Link>
+        <ul className="space-y-1">
+          {[...PRIMARY, ...SECONDARY].map(({ href, label, Icon }) => (
+            <li key={href}>
+              <Link
+                href={href}
+                aria-current={isActive(path, href) ? "page" : undefined}
+                className="flex items-center gap-3 rounded-[10px] px-3 py-2.5 text-ivory-dim hover:text-ivory aria-[current=page]:bg-surface aria-[current=page]:text-ivory"
+              >
+                <Icon width={20} height={20} />
+                {label}
+              </Link>
+            </li>
+          ))}
+        </ul>
+        <form action="/auth/signout" method="post" className="mt-auto px-3">
+          <button className="text-sm text-ivory-faint hover:text-ivory-dim">Sign out</button>
+        </form>
+      </nav>
+
+      {/* Mobile bar */}
+      <nav
+        aria-label="Main"
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-ground/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
+      >
+        <ul className="mx-auto grid max-w-xl grid-cols-5">
+          {[...PRIMARY, { href: "/more", label: "More", Icon: IconMore }].map(({ href, label, Icon }) => {
+            const active = href === "/more" ? moreActive : isActive(path, href);
+            return (
+              <li key={href}>
+                <Link
+                  href={href}
+                  aria-current={active ? "page" : undefined}
+                  className="flex min-h-[58px] flex-col items-center justify-center gap-1 text-[11px] text-ivory-faint aria-[current=page]:text-ivory"
+                >
+                  <Icon className={active ? "text-emerald" : ""} />
+                  {label}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
+    </>
+  );
+}
+
