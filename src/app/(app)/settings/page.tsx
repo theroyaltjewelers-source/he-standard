@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/page-header";
 import { DeleteAccountForm, EraseForm, SettingsForm } from "@/components/settings-forms";
 import { PreferencesForm } from "@/components/preferences-form";
 import type { UserPreferences } from "@/lib/types";
+import { SystemHealth } from "@/components/system-health";
 
 export const metadata = { title: "Settings & data" };
 
@@ -33,6 +34,8 @@ export default async function Settings() {
           </li>
         </ul>
       </section>
+
+      <SystemHealth supabase={supabase} tz={profile.timezone} />
 
       <section className="mt-16 space-y-4">
         <h2 className="h-section">Your data</h2>

@@ -41,6 +41,7 @@ export default async function Coach({ searchParams }: PageProps<"/coach">) {
         aiReady={!!env.anthropicKey()}
         voiceRepliesDefault={prefs?.voice_replies ?? false}
         haptics={prefs?.haptics ?? true}
+        initialPrompt={typeof sp.q === "string" ? sp.q.slice(0, 500) : ""}
       />
     </div>
   );

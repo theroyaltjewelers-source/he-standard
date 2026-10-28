@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Question } from "@/lib/interview";
 import { PRAYERS, PRAYER_LABEL } from "@/lib/prayer";
+import { dayBoundsUtc } from "@/lib/time";
 
 /**
  * Evening questions that depend on what actually happened today. They are
@@ -9,13 +10,14 @@ import { PRAYERS, PRAYER_LABEL } from "@/lib/prayer";
  * page and the server action always agree on which questions exist.
  * Every adaptive question is optional: they deepen the review, never gate it.
  */
-export async function adaptiveEveningQuestions(db: SupabaseClient, today: string): Promise<Question[]> {
+export async function adaptiveEveningQuestions(db: SupabaseClient, today: string, tz: string): Promise<Question[]> {
+  const { start, end } = dayBoundsUtc(today, tz);
   const [{ data: cs }, { data: plan }, { data: prayers }, { data: impulses }, { data: focus }] = await Promise.all([
     db.from("commitments").select("title,status,made_to").eq("commitment_date", today),
     db.from("daily_plans").select("avoid_behavior").eq("plan_date", today).maybeSingle(),
     db.from("prayer_confirmations").select("prayer").eq("prayer_date", today),
-    db.from("impulse_logs").select("kind,outcome").gte("created_at", `${today}T00:00:00Z`),
-    db.from("focus_sessions").select("status,distractions").gte("started_at", `${today}T00:00:00Z`),
+    db.from("impulse_logs").select("kind,outcome").gte("created_at", start.toISOString()).lt("created_at", end.toISOString()),
+    db.from("focus_sessions").select("status,distractions").gte("started_at", start.toISOString()).lt("started_at", end.toISOString()),
   ]);
   const qs: Question[] = [];
   const broken = (cs ?? []).filter((c) => c.status === "broken");

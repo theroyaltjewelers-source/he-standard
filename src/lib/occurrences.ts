@@ -6,7 +6,7 @@ import { syncEventReminders, insertRows } from "./reminders";
 import { actionsFor } from "./reminder-policy";
 import { localDateString } from "./time";
 import { createAdminClient } from "./supabase/admin";
-import { isConnected, pushEvent } from "./google";
+import { pushOrQueue } from "./sync";
 import type { ActivityOccurrence, CalendarEvent } from "./types";
 
 /**
@@ -16,8 +16,8 @@ import type { ActivityOccurrence, CalendarEvent } from "./types";
  */
 
 export type OccurrenceAction =
-  | { type: "start" }
-  | { type: "complete"; durationMinutes?: number | null; workoutType?: string | null; intensity?: number | null; notes?: string | null }
+  | { type: "start"; actualAt?: Date | null }
+  | { type: "complete"; durationMinutes?: number | null; workoutType?: string | null; intensity?: number | null; notes?: string | null; actualAt?: Date | null }
   | { type: "late"; minutes?: number }
   | { type: "skip"; reason: string }
   | { type: "excuse"; reason: string }
@@ -44,7 +44,7 @@ export async function ensureOccurrence(db: SupabaseClient, userId: string, ev: C
 export function isOccurrenceOf(ev: CalendarEvent, start: Date, tz: string): boolean {
   if (Date.parse(ev.starts_at) === start.getTime()) return true;
   if (ev.recurrence === "none") return false;
-  const list = expand({ startsAt: new Date(ev.starts_at), recurrence: ev.recurrence, until: ev.recurrence_until, timeZone: tz, from: new Date(start.getTime() - 1000), to: new Date(start.getTime() + 1000) });
+  const list = expand({ startsAt: new Date(ev.starts_at), recurrence: ev.recurrence, until: ev.recurrence_until, timeZone: ev.timezone || tz, from: new Date(start.getTime() - 1000), to: new Date(start.getTime() + 1000) });
   return list.some((d) => d.getTime() === start.getTime());
 }
 
@@ -58,24 +58,31 @@ export async function applyOccurrenceAction(db: SupabaseClient, userId: string, 
   const occ = await ensureOccurrence(db, userId, ev, start);
   const now = new Date();
   const evidence = source === "system" ? "unverified" : "self_reported";
+  // Reported after the day ended → retrospective self-report (never shown as contemporaneous).
+  const retrospective = localDateString(start, tz) < localDateString(now, tz);
+  const stamp = { confirmed_at: now.toISOString(), retrospective: retrospective || occ.retrospective === true };
   let patch: Partial<ActivityOccurrence> & Record<string, unknown> = {};
   let message = "";
   let newEventId: string | undefined;
 
   switch (action.type) {
     case "start": {
-      const delay = Math.max(0, Math.round((now.getTime() - start.getTime()) / 60_000));
-      patch = { status: "started", started_at: occ.started_at ?? now.toISOString(), delay_minutes: delay > 0 ? delay : occ.delay_minutes, evidence, source };
+      const at = action.actualAt ?? now;
+      const delay = Math.max(0, Math.round((at.getTime() - start.getTime()) / 60_000));
+      patch = { status: "started", started_at: occ.started_at ?? at.toISOString(), delay_minutes: delay > 0 ? delay : occ.delay_minutes, evidence, source, ...stamp };
       await cancelStageReminders(db, ev, start, "life-start");
       message = `Started ${ev.title}`;
       break;
     }
     case "complete": {
-      const startedAt = occ.started_at ? new Date(occ.started_at) : null;
-      const status = completionStatus({ scheduledStart: start, startedAt, delayMinutes: occ.delay_minutes });
       const planned = occ.occurrence_end ? Math.round((Date.parse(occ.occurrence_end) - start.getTime()) / 60_000) : 60;
-      const duration = action.durationMinutes ?? (startedAt ? Math.max(1, Math.round((now.getTime() - startedAt.getTime()) / 60_000)) : planned);
-      patch = { status, completed_at: now.toISOString(), duration_minutes: Math.min(duration, 1440), notes: action.notes ?? occ.notes, evidence, source };
+      // For a retrospective report the user tells us when it actually happened.
+      const reportedStart = action.actualAt ?? null;
+      const startedAt = occ.started_at ? new Date(occ.started_at) : reportedStart;
+      const status = completionStatus({ scheduledStart: start, startedAt, delayMinutes: occ.delay_minutes });
+      const duration = action.durationMinutes ?? (startedAt && !reportedStart ? Math.max(1, Math.round((now.getTime() - startedAt.getTime()) / 60_000)) : planned);
+      const completedAt = reportedStart ? new Date(reportedStart.getTime() + duration * 60_000) : retrospective ? new Date(start.getTime() + duration * 60_000) : now;
+      patch = { status, started_at: occ.started_at ?? reportedStart?.toISOString() ?? null, completed_at: completedAt.toISOString(), duration_minutes: Math.min(duration, 1440), notes: action.notes ?? occ.notes, evidence, source, ...stamp };
       await cancelStageReminders(db, ev, start);
       if ((ev.kind ?? "appointment") === "workout") {
         const { data: existing } = await db.from("workout_logs").select("id").eq("occurrence_id", occ.id).maybeSingle();
@@ -87,7 +94,7 @@ export async function applyOccurrenceAction(db: SupabaseClient, userId: string, 
         if (existing) await db.from("workout_logs").update(log).eq("id", existing.id);
         else await db.from("workout_logs").insert(log);
       }
-      message = status === "completed_late" ? `Completed ${ev.title} (started late)` : `Completed ${ev.title}`;
+      message = `${status === "completed_late" ? `Completed ${ev.title} (started late)` : `Completed ${ev.title}`}${stamp.retrospective ? " — recorded as reported later" : ""}`;
       break;
     }
     case "late": {
@@ -106,12 +113,12 @@ export async function applyOccurrenceAction(db: SupabaseClient, userId: string, 
       break;
     }
     case "skip":
-      patch = { status: "skipped", skip_reason: action.reason.slice(0, 500), evidence, source };
+      patch = { status: "skipped", skip_reason: action.reason.slice(0, 500), evidence, source, ...stamp };
       await cancelStageReminders(db, ev, start);
       message = `Skipped ${ev.title}`;
       break;
     case "excuse":
-      patch = { status: "excused", skip_reason: action.reason.slice(0, 500), evidence, source };
+      patch = { status: "excused", skip_reason: action.reason.slice(0, 500), evidence, source, ...stamp };
       await cancelStageReminders(db, ev, start);
       message = `Excused ${ev.title}`;
       break;
@@ -120,7 +127,7 @@ export async function applyOccurrenceAction(db: SupabaseClient, userId: string, 
       message = "Note saved";
       break;
     case "reopen":
-      patch = { status: "scheduled", started_at: null, completed_at: null, duration_minutes: null, skip_reason: null, rescheduled_to: null };
+      patch = { status: "scheduled", started_at: null, completed_at: null, duration_minutes: null, skip_reason: null, rescheduled_to: null, confirmed_at: null, retrospective: false };
       if ((ev.kind ?? "appointment") === "workout") await db.from("workout_logs").delete().eq("occurrence_id", occ.id);
       message = "Reopened";
       break;
@@ -143,17 +150,14 @@ export async function applyOccurrenceAction(db: SupabaseClient, userId: string, 
         const { data: copy, error } = await db.from("events").insert({
           user_id: userId, title: ev.title, location: ev.location, notes: ev.notes, starts_at: to.toISOString(), ends_at: new Date(to.getTime() + dur).toISOString(),
           all_day: false, importance: ev.importance, prep_minutes: ev.prep_minutes, travel_minutes: ev.travel_minutes, reminder_offsets: ev.reminder_offsets,
-          recurrence: "none", kind: ev.kind ?? "appointment", accountability: ev.accountability ?? "light", rescheduled_from: ev.id, plan_confirmed_at: ev.plan_confirmed_at,
+          recurrence: "none", kind: ev.kind ?? "appointment", accountability: ev.accountability ?? "light", rescheduled_from: ev.id, plan_confirmed_at: ev.plan_confirmed_at, timezone: ev.timezone ?? tz,
         }).select("*").single<CalendarEvent>();
         if (error) throw new Error(`Could not reschedule: ${error.message}`);
         target = copy;
         newEventId = copy.id;
       }
       await syncEventReminders(db, userId, target, tz);
-      try {
-        const admin = createAdminClient();
-        if (await isConnected(admin, userId)) await pushEvent(admin, userId, target, tz);
-      } catch { /* calendar push failures surface on the calendar settings page via sync_status */ }
+      await pushOrQueue(createAdminClient(), userId, target, tz); // failures are queued for retry
       message = `Moved to ${to.toLocaleString("en-US", { timeZone: tz, weekday: "short", hour: "numeric", minute: "2-digit" })}`;
       break;
     }
@@ -168,13 +172,15 @@ export async function applyOccurrenceAction(db: SupabaseClient, userId: string, 
  * a lifecycle row, and mark unanswered ones that ended 3+ hours ago as
  * "awaiting confirmation" (never completed, never missed).
  */
-export async function sweepOccurrences(admin: SupabaseClient, userId: string, tz: string, now = new Date()) {
-  const from = new Date(now.getTime() - 36 * 3600_000);
+export async function sweepOccurrences(admin: SupabaseClient, userId: string, tz: string, now = new Date(), since?: Date) {
+  // Look back 36 h normally; after an outage or long inactivity, back to the last reconciliation (max 30 days).
+  const floor = new Date(now.getTime() - 30 * 864e5);
+  const from = since && since < new Date(now.getTime() - 36 * 3600_000) ? (since > floor ? since : floor) : new Date(now.getTime() - 36 * 3600_000);
   const { data: events } = await admin.from("events").select("*").eq("user_id", userId).neq("accountability", "off").eq("all_day", false)
     .or(`recurrence.neq.none,starts_at.gte.${from.toISOString()}`);
   let created = 0;
   for (const ev of (events ?? []) as CalendarEvent[]) {
-    const starts = expand({ startsAt: new Date(ev.starts_at), recurrence: ev.recurrence, until: ev.recurrence_until, timeZone: tz, from, to: now });
+    const starts = expand({ startsAt: new Date(ev.starts_at), recurrence: ev.recurrence, until: ev.recurrence_until, timeZone: ev.timezone || tz, from, to: now });
     const dur = ev.ends_at ? Date.parse(ev.ends_at) - Date.parse(ev.starts_at) : 60 * 60_000;
     const rows = starts.map((s) => ({
       user_id: userId, event_id: ev.id, occurrence_start: s.toISOString(), occurrence_end: new Date(s.getTime() + dur).toISOString(),

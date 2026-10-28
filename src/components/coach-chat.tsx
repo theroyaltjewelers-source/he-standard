@@ -43,13 +43,14 @@ function haptic(on: boolean) {
   if (on && typeof navigator !== "undefined" && "vibrate" in navigator) navigator.vibrate?.(12);
 }
 
-export function CoachChat({ initialConversationId, initialMessages, initialActions, aiReady, voiceRepliesDefault, haptics }: {
-  initialConversationId: string | null; initialMessages: ChatMessage[]; initialActions: ActionCard[]; aiReady: boolean; voiceRepliesDefault: boolean; haptics: boolean;
+export function CoachChat({ initialConversationId, initialMessages, initialActions, aiReady, voiceRepliesDefault, haptics, initialPrompt = "" }: {
+  initialConversationId: string | null; initialMessages: ChatMessage[]; initialActions: ActionCard[]; aiReady: boolean; voiceRepliesDefault: boolean; haptics: boolean; initialPrompt?: string;
 }) {
   const [conversationId, setConversationId] = useState(initialConversationId);
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [actions, setActions] = useState<Record<number, ActionCard[]>>(initialActions.length ? { [Math.max(0, initialMessages.length - 1)]: initialActions } : {});
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(initialPrompt);
+  const [speaking, setSpeaking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [listening, setListening] = useState(false);
@@ -67,6 +68,8 @@ export function CoachChat({ initialConversationId, initialMessages, initialActio
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text.replace(/[*_#`]/g, ""));
     u.rate = 0.98;
+    u.onstart = () => setSpeaking(true);
+    u.onend = u.onerror = () => setSpeaking(false);
     window.speechSynthesis.speak(u);
   }, [speak]);
 
@@ -79,10 +82,13 @@ export function CoachChat({ initialConversationId, initialMessages, initialActio
     setInterim("");
     setMessages((m) => [...m, { role: "user", text: t, voice: method === "voice" }]);
     try {
-      const res = await fetch("/api/coach", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: t, conversation_id: conversationId, input_method: method, voice_reply: speak }),
-      });
+      // One id per message: an automatic retry after a dropped connection is recognised
+      // by the server and never runs the message's actions twice.
+      const body = JSON.stringify({ message: t, conversation_id: conversationId, input_method: method, voice_reply: speak, request_id: crypto.randomUUID() });
+      const post = () => fetch("/api/coach", { method: "POST", headers: { "Content-Type": "application/json" }, body });
+      let res: Response;
+      try { res = await post(); } catch { await new Promise((r) => setTimeout(r, 1500)); res = await post(); }
+      if (res.status === 409) { await new Promise((r) => setTimeout(r, 2500)); res = await post(); }
       const j = await res.json();
       if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
       setConversationId(j.conversation_id);
@@ -105,7 +111,7 @@ export function CoachChat({ initialConversationId, initialMessages, initialActio
     if (!Ctor) return;
     if (listening) { recRef.current?.stop(); return; }
     haptic(haptics);
-    if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
+    if (typeof window !== "undefined" && "speechSynthesis" in window) { window.speechSynthesis.cancel(); setSpeaking(false); }
     const r = new Ctor();
     r.continuous = false;
     r.interimResults = true;
@@ -159,6 +165,9 @@ export function CoachChat({ initialConversationId, initialMessages, initialActio
     setError(null);
   }
 
+  const awaiting = Object.values(actions).flat().some((c) => c.status === "awaiting_confirmation");
+  const orbState: OrbState = listening ? "listening" : busy ? "processing" : speaking ? "speaking" : error ? "error" : awaiting ? "confirm" : "idle";
+
   if (!aiReady) {
     return (
       <div className="rounded-[14px] border border-brass-deep p-5 text-ivory-dim">
@@ -197,7 +206,7 @@ export function CoachChat({ initialConversationId, initialMessages, initialActio
           </div>
         ))}
         {interim && <p className="ml-auto max-w-[85%] text-right text-ivory-faint italic">{interim}</p>}
-        {busy && <p className="text-sm text-ivory-faint">Working…</p>}
+        {busy && <p className="flex items-center gap-2 text-sm text-ivory-faint"><span className="orb-dots" aria-hidden><i /><i /><i /></span>Working…</p>}
         {error && <p role="alert" className="text-sm text-brass">{error}</p>}
         <div ref={endRef} />
       </div>
@@ -207,12 +216,7 @@ export function CoachChat({ initialConversationId, initialMessages, initialActio
         <textarea value={input} onChange={(e) => setInput(e.target.value)} rows={1}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(input, "typed"); } }}
           className="field max-h-40 min-h-[48px] resize-none font-sans text-base" placeholder={listening ? "Listening…" : "Type, or tap the microphone"} aria-label="Message the Coach" disabled={busy} />
-        {srSupported && (
-          <button type="button" onClick={toggleMic} disabled={busy} aria-pressed={listening} aria-label={listening ? "Stop listening" : "Speak to the Coach"}
-            className={`grid size-12 shrink-0 place-items-center rounded-full border transition-colors ${listening ? "border-lime bg-lime text-[var(--on-lime)]" : "border-line bg-surface"}`}>
-            {listening ? <IconStop /> : <IconMic />}
-          </button>
-        )}
+        {srSupported && <VoiceOrb state={orbState} onClick={toggleMic} disabled={busy} />}
         <button className="btn btn-primary h-12 shrink-0" disabled={busy || !input.trim()}>Send</button>
       </form>
       {!srSupported && <p className="text-xs text-ivory-faint">Voice input isn&apos;t available in this browser. On iPhone it works in Safari; elsewhere use Chrome or Edge.</p>}
@@ -242,5 +246,23 @@ function Card({ a, onDecide, onUndo }: { a: ActionCard; onDecide: (d: "confirm" 
       )}
       {a.status === "executed" && a.can_undo && <button onClick={onUndo} className="mt-2 text-xs text-ivory-faint underline-offset-4 hover:text-ivory-dim hover:underline">Undo</button>}
     </div>
+  );
+}
+
+type OrbState = "idle" | "listening" | "processing" | "speaking" | "confirm" | "error";
+const ORB_LABEL: Record<OrbState, string> = {
+  idle: "Speak to the Coach", listening: "Listening — tap to stop", processing: "Working on it", speaking: "Speaking",
+  confirm: "Waiting for your confirmation below", error: "Something went wrong — tap to try again",
+};
+
+/** Voice orb: every visual state is driven by a real state (recognition, request, speech synthesis, pending confirmation, error). */
+function VoiceOrb({ state, onClick, disabled }: { state: OrbState; onClick: () => void; disabled: boolean }) {
+  return (
+    <button type="button" onClick={onClick} disabled={disabled} aria-pressed={state === "listening"} aria-label={ORB_LABEL[state]} title={ORB_LABEL[state]}
+      className="orb relative grid size-12 shrink-0 place-items-center rounded-full" data-state={state}>
+      <span className="orb-ring" aria-hidden />
+      <span className="relative z-10">{state === "listening" ? <IconStop /> : <IconMic />}</span>
+      <span className="sr-only" aria-live="polite">{state === "idle" ? "" : ORB_LABEL[state]}</span>
+    </button>
   );
 }

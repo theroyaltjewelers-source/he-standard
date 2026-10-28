@@ -105,7 +105,8 @@ export async function logHabit(form: FormData) {
   if (status === "clear") {
     await supabase.from("habit_logs").delete().eq("habit_id", habit_id).eq("log_date", date);
   } else if (["done", "skipped", "rest"].includes(status)) {
-    await supabase.from("habit_logs").upsert({ user_id: user.id, habit_id, log_date: date, status }, { onConflict: "habit_id,log_date" });
+    // Logged after the day ended → marked as a retrospective self-report.
+    await supabase.from("habit_logs").upsert({ user_id: user.id, habit_id, log_date: date, status, confirmed_at: new Date().toISOString(), retrospective: date < today }, { onConflict: "habit_id,log_date" });
   }
   revalidatePath("/today");
   revalidatePath("/goals");

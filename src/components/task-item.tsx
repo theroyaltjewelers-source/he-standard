@@ -4,11 +4,13 @@ import { useState, useTransition } from "react";
 import { completeTask, deleteTask, missTask, postponeTask, setTaskDone, toggleTopPriority } from "@/app/actions/tasks";
 import { haptic } from "@/lib/haptics";
 import { toast } from "@/components/ui/toast";
+import { TaskDetailPanel } from "@/components/task-detail";
 import type { Task } from "@/lib/types";
 
-export function TaskItem({ t, dueLabel, overdue, tomorrow, showDate }: {
-  t: Task; dueLabel: string | null; overdue: boolean; tomorrow: string; showDate?: string | null;
+export function TaskItem({ t, dueLabel, overdue, tomorrow, showDate, tz = "UTC" }: {
+  t: Task; dueLabel: string | null; overdue: boolean; tomorrow: string; showDate?: string | null; tz?: string;
 }) {
+  const [detail, setDetail] = useState(false);
   const [open, setOpen] = useState<null | "done" | "missed" | "move">(null);
   const [pending, start] = useTransition();
   const [justDone, setJustDone] = useState(false);
@@ -32,6 +34,7 @@ export function TaskItem({ t, dueLabel, overdue, tomorrow, showDate }: {
 
   return (
     <li className="py-3">
+      {detail && <TaskDetailPanel id={t.id} tz={tz} onClose={() => setDetail(false)} />}
       <div className="flex items-start gap-3">
         <button
           type="button"
@@ -46,7 +49,7 @@ export function TaskItem({ t, dueLabel, overdue, tomorrow, showDate }: {
             : done && <svg className={justDone ? "check-draw" : ""} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" aria-hidden><path d="M5 12.5l4 4 10-10" /></svg>}
         </button>
         <div className="min-w-0 flex-1">
-          <button onClick={() => setOpen(open ? null : done || missed ? null : "done")} className={`text-left ${done ? "text-ivory-dim line-through decoration-ivory-faint" : missed ? "text-ivory-dim" : ""}`}>
+          <button onClick={() => setDetail(true)} aria-haspopup="dialog" className={`text-left ${done ? "text-ivory-dim line-through decoration-ivory-faint" : missed ? "text-ivory-dim" : ""}`}>
             {t.is_top_priority && <span className="mr-1.5 text-emerald" aria-label="Priority">●</span>}
             {t.title}
           </button>
@@ -58,6 +61,9 @@ export function TaskItem({ t, dueLabel, overdue, tomorrow, showDate }: {
               t.postponed_count > 0 ? `postponed ${t.postponed_count}×` : null,
               done ? (t.verification === "evidence" ? "done, with evidence" : "done, self-reported") : null,
               missed ? "not done" : null,
+              t.retrospective ? "reported later" : null,
+              t.series_id ? "repeats" : null,
+              t.started_at && t.status === "pending" ? "in progress" : null,
             ].filter(Boolean).join(", ")}
           </p>
           {t.evidence && <p className="text-xs text-ivory-dim">Evidence: {t.evidence}</p>}

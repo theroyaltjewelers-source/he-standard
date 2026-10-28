@@ -7,11 +7,15 @@ import type { ScoringInput } from "./index";
  * Loads every record the scoring engine reads for [from, today] (RLS limits it
  * to the signed-in user). Timestamps are converted to the user's local dates.
  */
-export async function loadScoringInput(db: SupabaseClient, opts: { from: string; today: string; tz: string; since: string }): Promise<Omit<ScoringInput, "from" | "to">> {
+export async function loadScoringInput(db: SupabaseClient, opts: { from: string; today: string; tz: string; since: string; userId?: string }): Promise<Omit<ScoringInput, "from" | "to">> {
   const { from, today, tz } = opts;
+  // Explicit user filter (required with the service-role client used by the planner).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const own = (q: any) => (opts.userId ? q.eq("user_id", opts.userId) : q);
   const fromTs = new Date(`${shiftDate(from, -1)}T00:00:00Z`).toISOString();
-  const all = async <T>(q: () => PromiseLike<{ data: T[] | null; error: { message: string } | null }>) => {
-    const { data, error } = await q();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const all = async (q: () => any): Promise<any[]> => {
+    const { data, error } = await own(q());
     if (error) throw new Error(error.message);
     return data ?? [];
   };
@@ -26,7 +30,7 @@ export async function loadScoringInput(db: SupabaseClient, opts: { from: string;
     all(() => db.from("accountability_sessions").select("id,session_date,kind,status").gte("session_date", from).lte("session_date", today)),
     all(() => db.from("journal_entries").select("entry_date").gte("entry_date", from).lte("entry_date", today)),
     all(() => db.from("workout_logs").select("performed_on,workout_type").gte("performed_on", from).lte("performed_on", today)),
-    db.from("user_preferences").select("workout_target_per_week").maybeSingle(),
+    own(db.from("user_preferences").select("workout_target_per_week")).maybeSingle(),
   ]);
   const sessionIds = ss.filter((s) => s.kind === "evening").map((s) => s.id as string);
   const answers = sessionIds.length

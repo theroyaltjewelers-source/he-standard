@@ -51,7 +51,7 @@ const EVENT_HORIZON_DAYS = 8;
 
 export function buildEventReminderRows(userId: string, ev: CalendarEvent, timeZone: string, now = new Date()): Row[] {
   const occ = occurrences({
-    startsAt: new Date(ev.starts_at), recurrence: ev.recurrence, until: ev.recurrence_until, timeZone,
+    startsAt: new Date(ev.starts_at), recurrence: ev.recurrence, until: ev.recurrence_until, timeZone: ev.timezone || timeZone,
     from: now, to: new Date(now.getTime() + EVENT_HORIZON_DAYS * 864e5),
   });
   const rows: Row[] = [];

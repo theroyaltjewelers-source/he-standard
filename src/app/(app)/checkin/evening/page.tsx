@@ -28,7 +28,7 @@ export default async function Evening() {
     if (a.skipped) initial[`skip_${a.question_key}`] = "on";
     if (a.follow_up_answer) initial[`fu_${a.question_key}`] = a.follow_up_answer;
   }
-  const adaptive = await adaptiveEveningQuestions(supabase, today);
+  const adaptive = await adaptiveEveningQuestions(supabase, today, profile.timezone);
   const commitments = (cs ?? []) as Commitment[];
   const tasks = (ts ?? []) as Task[];
   const open = commitments.filter((c) => c.status === "open").length;
@@ -56,7 +56,7 @@ export default async function Evening() {
             <h3 className="mt-8 text-sm text-ivory-dim">Today&apos;s tasks {pendingTasks > 0 && <span className="text-brass">({pendingTasks} unresolved)</span>}</h3>
             <ul className="divide-y divide-line">
               {tasks.map((t) => (
-                <TaskItem key={t.id} t={t} tomorrow={shiftDate(today, 1)} dueLabel={t.due_at ? formatInZone(t.due_at, tz, "h:mm a") : null}
+                <TaskItem key={t.id} tz={tz} t={t} tomorrow={shiftDate(today, 1)} dueLabel={t.due_at ? formatInZone(t.due_at, tz, "h:mm a") : null}
                   overdue={!!t.due_at && Date.parse(t.due_at) < now} />
               ))}
             </ul>

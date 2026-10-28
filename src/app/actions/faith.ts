@@ -14,12 +14,12 @@ const s = (f: FormData, k: string) => (typeof f.get(k) === "string" ? (f.get(k) 
 const refresh = () => { revalidatePath("/faith"); revalidatePath("/today"); };
 
 export async function confirmPrayer(form: FormData) {
-  const { supabase, user } = await requireUser();
+  const { supabase, user, today } = await requireUser();
   const prayer = z.enum(PRAYERS).parse(s(form, "prayer"));
   const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).parse(s(form, "date"));
   const status = s(form, "status") === "prayed_late" ? "prayed_late" : s(form, "status") === "qada" ? "qada" : "prayed";
   await supabase.from("prayer_confirmations").upsert({
-    user_id: user.id, prayer_date: date, prayer, status, source: "app",
+    user_id: user.id, prayer_date: date, prayer, status, source: "app", retrospective: date < today,
     in_congregation: form.get("jamaah") === "on" ? true : null, reflection: s(form, "reflection") || null,
   }, { onConflict: "user_id,prayer_date,prayer" });
   await supabase.from("reminders").update({ status: "cancelled" }).eq("entity_type", "prayer").like("dedupe_key", `prayer:${date}:${prayer}:%`).eq("status", "scheduled");

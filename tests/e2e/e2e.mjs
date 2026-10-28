@@ -158,13 +158,21 @@ try {
   t = await text();
   ok(/Call the diamond supplier/.test(t), "task created from dashboard");
   const [task] = await q("select * from tasks where user_id=$1", [user.id]);
-  // complete with evidence via the inline form
-  const titleBtn = await page.$$("#anytime li button.text-left");
-  await titleBtn[0].click();
-  await page.waitForSelector("input[name=evidence]");
-  await page.type("input[name=evidence][placeholder='Evidence (optional)']", "Confirmed price by phone, notes in CRM");
-  await Promise.all([page.waitForNetworkIdle({ idleTime: 500, concurrency: 1 }), domClick("form:has(input[placeholder='Evidence (optional)']) button")]);
+  // The title opens the task detail panel; complete with evidence there.
+  await domClick("#anytime li button[aria-haspopup=dialog]");
+  await page.waitForSelector("[role=dialog] input[aria-label=Evidence]");
+  ok(/Revision history|History/i.test(await page.$eval("[role=dialog]", (d) => d.innerText)), "task detail panel shows history section");
+  await domClick("[role=dialog] button.chip:not([aria-label])"); // Start
+  await page.waitForFunction(() => ![...document.querySelectorAll("[role=dialog] button.chip")].some((b) => b.textContent === "Start"), { timeout: 10000 }).catch(() => {});
+  const [started] = await q("select started_at from tasks where id=$1", [task.id]);
+  ok(!!started.started_at, "Start records started_at");
+  await page.type("[role=dialog] input[aria-label=Evidence]", "Confirmed price by phone, notes in CRM");
+  await Promise.all([page.waitForNetworkIdle({ idleTime: 500, concurrency: 1 }), domClick("[role=dialog] form button.btn-primary")]);
+  await page.waitForFunction(() => /Reopen/.test(document.querySelector("[role=dialog]")?.innerText ?? ""), { timeout: 10000 }).catch(() => {});
   const [task2] = await q("select * from tasks where id=$1", [task.id]);
+  const revs = await q("select * from record_revisions where record_id=$1 order by created_at", [task.id]);
+  ok(revs.length >= 2, "task changes recorded in revision history", String(revs.length));
+  await page.keyboard.press("Escape");
   ok(task2.status === "done" && task2.verification === "evidence", "task completed with evidence (verification=evidence)", JSON.stringify([task2.status, task2.verification]));
 
   await go("/goals/new");
@@ -575,6 +583,116 @@ try {
   // Expected: commitments (1.0 + 0.3)/2 = 65; tasks 100; perf = (65*.55+100*.3)/.85 = 77.35; reporting 100 → 0.85*77.35+15 = 80.75 → 81
   ok(m?.[1] === "81", "score matches the published formula (81)", m?.[1]);
   await shot("today-final");
+
+  section("9b. v4 — recurring tasks, midnight rollover, history, fitness, health");
+  {
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    const dayShift = (d, n) => { const x = new Date(`${d}T12:00:00Z`); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+    const yesterday = dayShift(today, -1);
+
+    // Recurring task from the quick-add form
+    await go("/word");
+    await fill("input[name=title][aria-label='New task']", "Review the day's sales");
+    await page.$eval("form:has(input[aria-label='New task']) select[name=repeat]", (el) => { el.value = "daily"; });
+    await submit("form:has(input[aria-label='New task']) button.btn-quiet");
+    const [series] = await q("select * from task_series where user_id=$1", [user.id]);
+    ok(!!series && series.recurrence === "daily", "recurring task creates a series");
+    let occ = await q("select occurrence_date::text d from tasks where series_id=$1 order by 1", [series.id]);
+    ok(occ.length === 2 && occ[0].d === today && occ[1].d === dayShift(today, 1), "occurrences generated for today and tomorrow", JSON.stringify(occ));
+
+    // Simulate the app being closed for 3 days: back-date the account, series and last reconciliation.
+    await q("update profiles set created_at = now() - interval '6 days' where id=$1", [user.id]);
+    await q("update task_series set starts_on=$2, last_generated_on=$3 where id=$1", [series.id, dayShift(today, -4), dayShift(today, -4)]);
+    await q("delete from tasks where series_id=$1", [series.id]);
+    await q("update user_preferences set last_reconciled_on=$2 where user_id=$1", [user.id, dayShift(today, -3)]);
+    const plan = await (await fetch(`${APP}/api/cron/plan`, { method: "POST", headers: { Authorization: `Bearer ${CRON}` } })).json();
+    ok(plan.ok && plan.series_created >= 5, "scheduler back-fills missed recurring occurrences while the app was closed", JSON.stringify({ s: plan.series_created, e: plan.errors }));
+    ok(plan.days_finalized >= 3, "scheduler finalizes each ended day", String(plan.days_finalized));
+    occ = await q("select occurrence_date::text d, status from tasks where series_id=$1 order by 1", [series.id]);
+    ok(occ.length === 5 && occ[0].d === dayShift(today, -3) && occ[4].d === dayShift(today, 1), "one task row per day, history kept separately", JSON.stringify(occ.map((o) => o.d)));
+    const snaps = await q("select score_date::text d, final, policy_version from daily_scores where user_id=$1 order by 1", [user.id]);
+    ok(snaps.some((x) => x.d === yesterday && x.final) && snaps.some((x) => x.d === today && !x.final), "daily scores stored: final for ended days, provisional for today");
+    ok(snaps.every((x) => x.policy_version === "2026.10-1"), "stored scores carry their policy version");
+    const [prefRow] = await q("select last_reconciled_on::text d from user_preferences where user_id=$1", [user.id]);
+    ok(prefRow.d === today, "reconciliation marker advanced to today");
+    const again = await (await fetch(`${APP}/api/cron/plan`, { method: "POST", headers: { Authorization: `Bearer ${CRON}` } })).json();
+    ok(again.series_created === 0 && again.days_finalized === 0, "re-running the scheduler is idempotent");
+    const runs = await q("select job, ok from job_runs where job='plan' order by started_at desc limit 2");
+    ok(runs.length === 2 && runs.every((r) => r.ok), "scheduler runs are recorded in job_runs");
+
+    // Past-day view shows what was recorded, and a late completion is marked as reported later
+    await go(`/today?date=${yesterday}`);
+    let tt = await text();
+    await shot("past-day");
+    ok(/viewing a past day exactly as it was recorded/.test(tt) && /Recorded that day/.test(tt), "past day shows the recorded view");
+    ok(/as recorded/.test(tt) && /policy 2026\.10-1/.test(tt), "past day shows the stored score with its policy");
+    const yTask = (await q("select id from tasks where series_id=$1 and occurrence_date=$2", [series.id, yesterday]))[0];
+    const opened = await page.$$eval("button[aria-haspopup=dialog]", (bs) => { const b = bs.find((x) => /Review the day/.test(x.textContent)); if (b) b.click(); return !!b; });
+    ok(opened, "yesterday's occurrence is listed on the past day");
+    if (opened) {
+      await page.waitForSelector("[role=dialog] form button.btn-primary");
+      await Promise.all([page.waitForNetworkIdle({ idleTime: 500, concurrency: 1 }), domClick("[role=dialog] form button.btn-primary")]);
+      await page.waitForFunction(() => /Reopen/.test(document.querySelector("[role=dialog]")?.innerText ?? ""), { timeout: 10000 }).catch(() => {});
+      const [yt] = await q("select status, retrospective, confirmed_at from tasks where id=$1", [yTask.id]);
+      ok(yt.status === "done" && yt.retrospective === true && !!yt.confirmed_at, "completing a past occurrence is recorded as reported later", JSON.stringify(yt));
+      await page.keyboard.press("Escape");
+    }
+    const [todayTask] = await q("select status from tasks where series_id=$1 and occurrence_date=$2", [series.id, today]);
+    ok(todayTask.status !== "done", "completing yesterday's occurrence leaves today's untouched");
+
+    // Today: priorities card, clock, plan-my-day link
+    await go("/today");
+    tt = await text();
+    ok(/Today's three priorities/i.test(tt) && /Plan my day with the Coach/i.test(tt), "Today shows priorities and the plan-my-day entry");
+    const coachHref = await page.$eval("a[href^='/coach?q=']", (a) => a.getAttribute("href")).catch(() => null);
+    ok(!!coachHref, "plan-my-day opens the Coach with a prepared request");
+
+    // Fitness: log a strength session with sets, then a body-weight reading
+    await go("/fitness");
+    await page.type("input[aria-label='Exercise 1']", "Bench press");
+    await page.type("input[aria-label='Set 1 reps']", "5");
+    await page.type("input[aria-label='Set 1 weight']", "185");
+    await domClick("form[aria-label='Log a workout'] li button.text-accent"); // + Add set (copies previous)
+    await Promise.all([page.waitForNetworkIdle({ idleTime: 600, concurrency: 1 }), domClick("form[aria-label='Log a workout'] button.btn-primary")]);
+    await page.waitForFunction(() => /Bench press/.test(document.querySelector("#hist-h")?.parentElement?.innerText ?? ""), { timeout: 10000 }).catch(() => {});
+    const sets = await q("select s.reps, s.weight::float w, s.unit from workout_sets s join workout_exercises e on e.id=s.exercise_id where e.user_id=$1 and e.name='Bench press' order by s.set_number", [user.id]);
+    ok(sets.length === 2 && sets[0].reps === 5 && sets[0].w === 185 && sets[1].w === 185, "workout saved with exercises and sets", JSON.stringify(sets));
+    tt = await text();
+    ok(/Best lifts/i.test(tt) && /5×185 lb/.test(tt), "personal record table shows the best set");
+    await page.type("form[aria-label='Record body metrics'] input[name=weight]", "182.4");
+    await page.type("form[aria-label='Record body metrics'] input[name=sleep_hours]", "7.5");
+    await Promise.all([page.waitForNetworkIdle({ idleTime: 600, concurrency: 1 }), domClick("form[aria-label='Record body metrics'] button")]);
+    const bm = await q("select weight::float w, sleep_hours::float s, source from body_metrics where user_id=$1", [user.id]);
+    ok(bm.length === 1 && bm[0].w === 182.4 && bm[0].s === 7.5 && bm[0].source === "manual", "body metrics recorded as manual entries", JSON.stringify(bm));
+    const badFuture = await page.evaluate(async () => document.querySelector("form[aria-label='Log a workout'] input[type=date]")?.getAttribute("max"));
+    ok(badFuture === today, "future workouts can't be selected");
+    await shot("fitness");
+    ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "fitness page has no horizontal overflow on a phone");
+    await page.setViewport({ width: 1280, height: 900 });
+    await go("/fitness"); await shot("fitness-desktop");
+    await go("/today"); await shot("today-desktop");
+    await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2 });
+
+    // System health
+    await go("/settings");
+    tt = await text();
+    ok(/System health/.test(tt) && /Day planner & rollover/.test(tt) && /Healthy/.test(tt), "settings show scheduler health");
+
+    // Atomic confirmation: a second concurrent confirm can't execute twice
+    const [conv] = await q("insert into ai_conversations(user_id) values($1) returning id", [user.id]);
+    const [ex] = await q("insert into ai_tool_executions(user_id,conversation_id,tool,input,status,summary) values($1,$2,'create_task',$3,'awaiting_confirmation','Create a task') returning id", [user.id, conv.id, JSON.stringify({ title: "Confirm-race task", date: today })]);
+    const decide = () => fetch(`${APP}/api/coach/decide`, { method: "POST", headers: { Cookie: cookies, "Content-Type": "application/json" }, body: JSON.stringify({ execution_id: ex.id, decision: "confirm" }) }).then((r) => r.status);
+    const codes = await Promise.all([decide(), decide(), decide()]);
+    const made = await q("select count(*)::int n from tasks where user_id=$1 and title='Confirm-race task'", [user.id]);
+    ok(made[0].n <= 1, "concurrent confirmations execute the action at most once", JSON.stringify({ codes, n: made[0].n }));
+
+    // Revisions are server-written: the user can read but not forge them
+    const tok = (await (await fetch("http://127.0.0.1:54321/auth/v1/token?grant_type=password", { method: "POST", headers: { apikey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) })).json()).access_token;
+    const forge = await fetch("http://127.0.0.1:54321/rest/v1/record_revisions", { method: "POST", headers: { apikey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY, Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify({ user_id: user.id, table_name: "tasks", record_id: yTask.id, op: "update", actor: "x" }) });
+    ok(forge.status >= 400, "users cannot forge revision history", String(forge.status));
+    const forgeScore = await fetch("http://127.0.0.1:54321/rest/v1/daily_scores", { method: "POST", headers: { apikey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY, Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify({ user_id: user.id, score_date: "2020-01-01", policy_version: "x", integrity: {}, evolution: {} }) });
+    ok(forgeScore.status >= 400, "users cannot forge stored scores", String(forgeScore.status));
+  }
 
   section("10. Privacy: isolation, export, erase, delete");
   // Second user via auth API cannot read the first user's rows

@@ -32,6 +32,7 @@ const occSchema = z.object({
   workoutType: z.enum(["strength", "cardio", "mobility", "sport", "recovery", "other"]).optional(),
   intensity: z.number().int().min(1).max(5).optional(),
   ack: z.boolean().optional(),
+  actualTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
 });
 
 export async function occurrenceAction(input: z.input<typeof occSchema>): Promise<TimelineResult> {
@@ -56,8 +57,10 @@ export async function occurrenceAction(input: z.input<typeof occSchema>): Promis
       if (conflicts.length) return { conflicts };
     }
   }
+  const actualAt = i.actualTime ? zonedToUtc(localDateString(start, tz), i.actualTime, tz) : null;
   const action =
-    i.type === "complete" ? { type: "complete" as const, durationMinutes: i.durationMinutes, workoutType: i.workoutType, intensity: i.intensity, notes: i.notes }
+    i.type === "complete" ? { type: "complete" as const, durationMinutes: i.durationMinutes, workoutType: i.workoutType, intensity: i.intensity, notes: i.notes, actualAt }
+    : i.type === "start" ? { type: "start" as const, actualAt }
     : i.type === "late" ? { type: "late" as const, minutes: i.minutes }
     : i.type === "skip" ? { type: "skip" as const, reason: i.reason! }
     : i.type === "excuse" ? { type: "excuse" as const, reason: i.reason! }
@@ -77,6 +80,7 @@ export async function occurrenceAction(input: z.input<typeof occSchema>): Promis
 const taskSchema = z.object({
   id: z.uuid(),
   type: z.enum(["complete", "skip", "reschedule", "delay", "note"]),
+  actualTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
   reason: z.string().max(500).optional(),
   minutes: z.number().int().min(5).max(24 * 60).optional(),
   to: localTime.optional(),
@@ -95,8 +99,11 @@ export async function taskAction(input: z.input<typeof taskSchema>): Promise<Tim
   let patch: Record<string, unknown> = {};
   let message = "";
   if (i.type === "complete") {
-    patch = { status: "done", completed_at: new Date().toISOString(), verification: "self_reported" };
-    message = "Task done";
+    const today = localDateString(new Date(), tz);
+    const retro = !!t.scheduled_for && t.scheduled_for < today;
+    const at = retro && i.actualTime ? zonedToUtc(t.scheduled_for!, i.actualTime, tz) : new Date();
+    patch = { status: "done", completed_at: at.toISOString(), verification: "self_reported", confirmed_at: new Date().toISOString(), retrospective: retro };
+    message = retro ? "Task done — recorded as reported later" : "Task done";
   } else if (i.type === "skip") {
     if (!i.reason?.trim()) return { error: "Add a short reason." };
     patch = { status: "missed", miss_reason: i.reason, completed_at: null, verification: "none" };
@@ -130,6 +137,7 @@ export async function taskAction(input: z.input<typeof taskSchema>): Promise<Tim
 const comSchema = z.object({
   id: z.uuid(),
   type: z.enum(["complete", "skip", "excuse", "reschedule", "delay"]),
+  actualTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
   reason: z.string().max(2000).optional(),
   minutes: z.number().int().min(5).max(24 * 60).optional(),
   to: localTime.optional(),
@@ -148,9 +156,12 @@ export async function commitmentAction(input: z.input<typeof comSchema>): Promis
   let message = "";
   const deadline = c.original_promised_by ?? c.promised_by;
   if (i.type === "complete") {
-    const late = deadline ? Date.parse(deadline) + 5 * 60_000 < Date.now() : false;
-    patch = { status: late ? "kept_late" : "kept", resolved_at: new Date().toISOString(), verification: "self_reported" };
-    message = late ? "Kept — after the original deadline" : "Kept";
+    const today = localDateString(new Date(), tz);
+    const retro = c.commitment_date < today;
+    const at = retro && i.actualTime ? zonedToUtc(c.commitment_date, i.actualTime, tz) : new Date();
+    const late = deadline ? Date.parse(deadline) + 5 * 60_000 < at.getTime() : false;
+    patch = { status: late ? "kept_late" : "kept", resolved_at: at.toISOString(), verification: "self_reported", confirmed_at: new Date().toISOString(), retrospective: retro };
+    message = `${late ? "Kept — after the original deadline" : "Kept"}${retro ? " (recorded as reported later)" : ""}`;
   } else if (i.type === "skip") {
     if (!i.reason || i.reason.trim().split(/\s+/).length < 4) return { error: "Say what happened immediately before — a sentence is enough." };
     patch = { status: "broken", failure_context: i.reason, resolved_at: new Date().toISOString(), verification: "none" };
@@ -191,7 +202,7 @@ export async function previewMove(input: { to: string; durationMinutes: number; 
 export async function confirmPrayerTimeline(prayer: string, date: string): Promise<TimelineResult> {
   const { supabase, user } = await requireUser();
   if (!["fajr", "dhuhr", "asr", "maghrib", "isha"].includes(prayer) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: "Unknown prayer" };
-  const { error } = await supabase.from("prayer_confirmations").upsert({ user_id: user.id, prayer_date: date, prayer, status: "prayed", source: "app" }, { onConflict: "user_id,prayer_date,prayer" });
+  const { error } = await supabase.from("prayer_confirmations").upsert({ user_id: user.id, prayer_date: date, prayer, status: "prayed", source: "app", retrospective: date < (await requireUser()).today }, { onConflict: "user_id,prayer_date,prayer" });
   if (error) return { error: error.message };
   await supabase.from("reminders").update({ status: "cancelled" }).eq("entity_type", "prayer").like("dedupe_key", `prayer:${date}:${prayer}:%`).eq("status", "scheduled");
   revalidatePath("/today");

@@ -7,7 +7,8 @@ import { eventsBetween } from "../records";
 import { prepPlan } from "../scheduling";
 import { cancelFutureReminders, insertRows, prayerConfig, syncCommitmentReminders, syncEventReminders, syncTaskReminders, type PrayerSettingsRow } from "../reminders";
 import { PRAYERS, PRAYER_LABEL, prayerTimesFor } from "../prayer";
-import { deleteRemote, isConnected, pullChanges, pushEvent } from "../google";
+import { deleteRemote, isConnected, pullChanges } from "../google";
+import { pushOrQueue } from "../sync";
 import type { CalendarEvent, Commitment, Task } from "../types";
 
 /**
@@ -423,15 +424,12 @@ const createEvent: ToolDef<typeof eventSchema> = {
       ends_at: new Date(starts.getTime() + i.duration_minutes * 60_000).toISOString(), importance: i.importance,
       prep_minutes: i.prep_minutes, travel_minutes: i.travel_minutes, reminder_offsets: i.reminder_minutes_before,
       recurrence: i.recurrence, recurrence_until: i.recurrence_until ?? null, plan_confirmed_at: new Date().toISOString(),
-      kind: i.kind, accountability: i.accountability ?? (i.kind === "workout" || i.kind === "deadline" ? "standard" : "light"),
+      kind: i.kind, accountability: i.accountability ?? (i.kind === "workout" || i.kind === "deadline" ? "standard" : "light"), timezone: ctx.tz,
     }).select("*").single<CalendarEvent>();
     if (error) return fail(`Couldn't create the appointment: ${error.message}`);
     await syncEventReminders(ctx.db, ctx.userId, data, ctx.tz);
     let google: string = "not connected";
-    if (await isConnected(ctx.admin, ctx.userId)) {
-      try { await pushEvent(ctx.admin, ctx.userId, data, ctx.tz); google = "added to Google Calendar"; }
-      catch (e) { google = `saved here, but Google Calendar failed: ${(e as Error).message}`; }
-    }
+    google = (await pushOrQueue(ctx.admin, ctx.userId, data, ctx.tz)).status;
     const { count } = await ctx.db.from("reminders").select("id", { count: "exact", head: true }).eq("entity_id", data.id).eq("status", "scheduled");
     return ok(`Created “${data.title}” ${fmt(starts, ctx.tz)}; ${count ?? 0} reminders scheduled; Google: ${google}`,
       { event: { id: data.id, title: data.title, starts: fmt(starts, ctx.tz) }, reminders_scheduled: count ?? 0, google },
@@ -467,10 +465,7 @@ const rescheduleEvent: ToolDef = {
     if (error) return fail(error.message);
     await syncEventReminders(ctx.db, ctx.userId, data, ctx.tz);
     let google = "not connected";
-    if (await isConnected(ctx.admin, ctx.userId)) {
-      try { await pushEvent(ctx.admin, ctx.userId, data, ctx.tz); google = "updated in Google Calendar"; }
-      catch (e) { google = `Google update failed: ${(e as Error).message}`; }
-    }
+    google = (await pushOrQueue(ctx.admin, ctx.userId, data, ctx.tz)).status;
     return ok(`Moved “${data.title}” to ${fmt(starts, ctx.tz)}; Google: ${google}`, { event: { id: data.id, starts: fmt(starts, ctx.tz) }, google }, {
       undo: { tool: "reschedule_event", input: { event_id: ev.id, date: localDateString(oldStart, ctx.tz), start_time: formatInZone(oldStart, ctx.tz, "HH:mm"), duration_minutes: dur } },
       entity: { type: "event", id: ev.id },

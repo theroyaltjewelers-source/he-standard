@@ -5,7 +5,7 @@ import { categorySetting } from "./reminder-policy";
 import { importVerses, pickIndex } from "./quran";
 import { isConnected, pullChanges } from "./google";
 import { generateWeeklyReport } from "./weekly";
-import { sweepOccurrences } from "./occurrences";
+import { reconcileUser } from "./rollover";
 import { dayOfWeek, formatInZone, shiftDate, todayIn, zonedToUtc } from "./time";
 import type { CalendarEvent, UserPreferences } from "./types";
 
@@ -15,7 +15,7 @@ import type { CalendarEvent, UserPreferences } from "./types";
  * by week, and Google sync uses sync tokens.
  */
 export async function planAllUsers(admin: SupabaseClient, now = new Date()) {
-  const summary = { users: 0, reminders_considered: 0, google_synced: 0, reports: 0, occurrences: 0, awaiting_confirmation: 0, verses: null as null | object, retention: null as unknown, errors: [] as string[] };
+  const summary = { users: 0, reminders_considered: 0, google_synced: 0, reports: 0, occurrences: 0, awaiting_confirmation: 0, series_created: 0, days_finalized: 0, verses: null as null | object, retention: null as unknown, errors: [] as string[] };
 
   try {
     const { count } = await admin.from("quran_verses").select("id", { count: "exact", head: true });
@@ -23,7 +23,7 @@ export async function planAllUsers(admin: SupabaseClient, now = new Date()) {
   } catch (e) { summary.errors.push(`verses: ${(e as Error).message}`); }
 
   const { data: profiles, error } = await admin.from("profiles")
-    .select("id,timezone,morning_checkin_time,evening_checkin_time,ai_analysis_consent,onboarding_completed_at")
+    .select("id,timezone,morning_checkin_time,evening_checkin_time,ai_analysis_consent,onboarding_completed_at,created_at")
     .not("onboarding_completed_at", "is", null);
   if (error) throw new Error(error.message);
 
@@ -75,13 +75,16 @@ export async function planAllUsers(admin: SupabaseClient, now = new Date()) {
       await insertRows(admin, rows);
       summary.reminders_considered += rows.length;
 
-      // Activity lifecycle: create records for accountable occurrences that
-      // have started; unanswered ones become "awaiting confirmation".
+      // Daily rollover: recurring-task occurrences (with back-fill), activity
+      // lifecycle records ("awaiting confirmation" when unanswered), and
+      // stored daily scores. Runs server-side, so it happens with the app closed.
       try {
-        const sw = await sweepOccurrences(admin, p.id, tz, now);
-        summary.occurrences += sw.considered;
-        summary.awaiting_confirmation += sw.awaiting;
-      } catch (e) { summary.errors.push(`occurrences ${p.id.slice(0, 8)}: ${(e as Error).message}`); }
+        const r = await reconcileUser(admin, p.id, tz, today, todayIn(tz, new Date(p.created_at ?? now)), now);
+        summary.occurrences += r.occurrences;
+        summary.awaiting_confirmation += r.awaiting;
+        summary.series_created += r.series_created;
+        summary.days_finalized += r.finalized.length;
+      } catch (e) { summary.errors.push(`rollover ${p.id.slice(0, 8)}: ${(e as Error).message}`); }
 
       // Google Calendar pull
       if (await isConnected(admin, p.id)) {
@@ -123,7 +126,8 @@ export async function planAllUsers(admin: SupabaseClient, now = new Date()) {
   try {
     const base = (await admin.rpc("apply_retention")).data as Record<string, number> | null;
     const v3 = (await admin.rpc("apply_retention_v3")).data as number | null;
-    summary.retention = { ...(base ?? {}), action_log: v3 ?? 0 };
+    const v4 = (await admin.rpc("apply_retention_v4")).data as Record<string, number> | null;
+    summary.retention = { ...(base ?? {}), action_log: v3 ?? 0, ...(v4 ?? {}) };
   } catch (e) { summary.errors.push(`retention: ${(e as Error).message}`); }
   return summary;
 }

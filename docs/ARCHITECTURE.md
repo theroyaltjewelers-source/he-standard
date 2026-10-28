@@ -243,3 +243,15 @@ Morning priorities: outcome, done-by time, effort, likely obstacle, first action
 - **Lifecycle:** `events.kind` + `events.accountability`; `lib/lifecycle.ts` builds start / did-you-start / did-you-finish reminders; `activity_occurrences` records outcomes (original start never rewritten); `workout_logs`; planner `sweepOccurrences` marks unanswered occurrences `awaiting_confirmation`.
 - **Notification controls:** `reminders.priority`, `user_preferences.daily_notification_budget`, `paused_until`; `notification_action_log` idempotency keys; Reminders page shows delivery checks and full history.
 - Feature status with evidence: `docs/FEATURE_STATUS.md`.
+
+## 12. Version 4 (Production Refinement Directive)
+
+**Day rollover.** Every user is reconciled by the 15-minute planner (`reconcileUser` in `src/lib/rollover.ts`) and again on the first Today load of a new day: (1) recurring task series generate one task row per occurrence through tomorrow, back-filling up to 30 days missed while idle; (2) activity occurrences since the last reconciliation are recorded (unanswered → awaiting confirmation, never "missed"); (3) each ended day (max 7 back) gets a final `daily_scores` snapshot under the current policy version, and today a provisional one; (4) `user_preferences.last_reconciled_on` advances. All steps are idempotent (unique keys + upserts that never overwrite a final snapshot).
+
+**Time.** Instants are stored in UTC; local days are computed in the user's IANA zone (`dayBoundsUtc` handles 23/25-hour days). Events and series carry their own zone, so a 9:00 appointment stays 9:00 where it was booked. Cross-midnight events belong to every day they overlap. Pure logic lives in `src/lib/series.ts` and is tested with fixed instants.
+
+**History.** `record_revisions` is written by a security-definer trigger on the core tables (before/after of changed columns, actor). Late confirmations set `confirmed_at` and `retrospective`. Past days are rendered from stored records and the stored score, labelled with its policy.
+
+**Reliability.** `job_runs` logs each scheduler run. Google writes try inline, then fall back to `sync_outbox` (claimed atomically, exponential backoff, dead after 8 attempts, retry from Settings). External events are never deleted silently. Coach confirmations claim `awaiting_confirmation → executing` atomically; requests are idempotent by `request_id`.
+
+**Fitness.** `workout_logs` → `workout_exercises` → `workout_sets`, plus `body_metrics` (source manual/imported). Weights are stored in the entered unit and converted only for display (`src/lib/fitness.ts`).

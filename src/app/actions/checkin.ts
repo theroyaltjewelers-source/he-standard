@@ -186,7 +186,7 @@ export async function saveEvening(prev: CheckinState, form: FormData): Promise<C
   const { count: openCount } = await supabase.from("commitments").select("id", { count: "exact", head: true }).eq("commitment_date", today).eq("status", "open");
   if ((openCount ?? 0) > 0) return { error: `Record each of today's commitments first — ${openCount} still open above.`, values, attempt };
 
-  const adaptive = await adaptiveEveningQuestions(supabase, today);
+  const adaptive = await adaptiveEveningQuestions(supabase, today, profile.timezone);
   const questions = [...adaptive, ...EVENING_QUESTIONS];
   const { followUps, accepted } = await reviewAnswers(form, questions, profile.ai_analysis_consent, "Evening accountability review");
   if (Object.keys(followUps).length) return { error: "A few answers need more detail.", followUps, values, attempt };

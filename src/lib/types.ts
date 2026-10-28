@@ -83,6 +83,11 @@ export interface Task {
   postponed_count: number;
   original_due_at?: string | null;
   original_scheduled_for?: string | null;
+  series_id?: string | null;
+  occurrence_date?: string | null;
+  started_at?: string | null;
+  confirmed_at?: string | null;
+  retrospective?: boolean;
   created_at: string;
 }
 
@@ -106,6 +111,8 @@ export interface Commitment {
   first_action?: string | null;
   original_promised_by?: string | null;
   reschedule_count?: number;
+  confirmed_at?: string | null;
+  retrospective?: boolean;
 }
 
 export interface CalendarEvent {
@@ -133,6 +140,7 @@ export interface CalendarEvent {
   kind?: ActivityKind;
   accountability?: AccountabilityLevel;
   rescheduled_from?: string | null;
+  timezone?: string | null;
 }
 
 export type ActivityKind = "appointment" | "workout" | "call" | "deadline" | "routine" | "obligation" | "focus_block";
@@ -172,6 +180,8 @@ export interface ActivityOccurrence {
   evidence: "confirmed" | "self_reported" | "imported" | "unverified";
   source: string;
   updated_at: string;
+  confirmed_at?: string | null;
+  retrospective?: boolean;
 }
 
 export interface WorkoutLog {

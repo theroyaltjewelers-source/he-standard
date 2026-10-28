@@ -6,6 +6,7 @@ import { commitmentAction, confirmPrayerTimeline, occurrenceAction, previewMove,
 import { haptic } from "@/lib/haptics";
 import { toast } from "@/components/ui/toast";
 import type { ItemState, TimelineItem } from "@/lib/timeline";
+import { TaskDetailPanel } from "@/components/task-detail";
 
 /* ------------------------------- formatting ------------------------------- */
 
@@ -61,6 +62,9 @@ function ActionPanel({ item, tz, date, initialMode, onClose }: { item: TimelineI
   const [wtype, setWtype] = useState("other");
   const [intensity, setIntensity] = useState<string>("");
   const resolved = ["completed", "late", "skipped", "rescheduled", "excused"].includes(item.state);
+  const [details, setDetails] = useState(false);
+  const isPast = date < localInput(new Date(), tz).slice(0, 10);
+  const [actualTime, setActualTime] = useState(() => localInput(new Date(item.start), tz).slice(11, 16));
   const isWorkout = item.kind === "workout";
   const coachQ = encodeURIComponent(`Help me with "${item.title}" at ${fmtTime(item.start, tz)}.`);
 
@@ -83,7 +87,7 @@ function ActionPanel({ item, tz, date, initialMode, onClose }: { item: TimelineI
       {item.type === "event" && !resolved && (
         <div className="flex flex-wrap gap-2">
           {!item.meta?.started && <button className={btn} disabled={pending} onClick={() => ev("start")}>Start</button>}
-          <button className={btn} disabled={pending} onClick={() => (isWorkout ? setMode(mode === "complete" ? null : "complete") : ev("complete"))}>Complete</button>
+          <button className={btn} disabled={pending} onClick={() => (isWorkout ? setMode(mode === "complete" ? null : "complete") : ev("complete", isPast ? { actualTime } : {}))}>Complete</button>
           <button className={btn} disabled={pending} onClick={() => ev("late", { minutes: 15 })}>Running late</button>
           <button className={btn} disabled={pending} onClick={() => setMode(mode === "reschedule" ? null : "reschedule")}>Reschedule</button>
           <button className={btn} disabled={pending} onClick={() => setMode(mode === "skip" ? null : "skip")}>Skip…</button>
@@ -97,9 +101,21 @@ function ActionPanel({ item, tz, date, initialMode, onClose }: { item: TimelineI
           <button className={btn} disabled={pending} onClick={() => setMode(mode === "note" ? null : "note")}>Note</button>
         </div>
       )}
+      {details && item.type === "task" && <TaskDetailPanel id={item.ref} tz={tz} onClose={() => setDetails(false)} />}
+      {isPast && !resolved && ["event", "task", "commitment"].includes(item.type) && (
+        <div className="rounded-[12px] bg-surface-3/60 p-2.5 text-xs text-ivory-dim">
+          <p>You&apos;re recording this after the day ended. It will be saved as <b>reported later</b> — with the time it happened and the time you reported it.</p>
+          <label className="mt-2 flex items-center gap-2">When did it happen?
+            <input type="time" value={actualTime} onChange={(e) => setActualTime(e.target.value)} className="field max-w-32 py-1" aria-label="Actual time" />
+          </label>
+        </div>
+      )}
+      {item.type === "task" && (
+        <button className="chip" onClick={() => setDetails(true)} aria-haspopup="dialog">Details & history</button>
+      )}
       {item.type === "task" && !resolved && (
         <div className="flex flex-wrap gap-2">
-          <button className={btn} disabled={pending} onClick={() => task("complete")}>Complete</button>
+          <button className={btn} disabled={pending} onClick={() => task("complete", isPast ? { actualTime } : {})}>Complete</button>
           <button className={btn} disabled={pending} onClick={() => task("delay", { minutes: 30 })}>Delay 30 min</button>
           <button className={btn} disabled={pending} onClick={() => setMode(mode === "reschedule" ? null : "reschedule")}>Reschedule</button>
           <button className={btn} disabled={pending} onClick={() => setMode(mode === "skip" ? null : "skip")}>Not doing it…</button>
@@ -108,7 +124,7 @@ function ActionPanel({ item, tz, date, initialMode, onClose }: { item: TimelineI
       )}
       {item.type === "commitment" && !resolved && (
         <div className="flex flex-wrap gap-2">
-          <button className={btn} disabled={pending} onClick={() => com("complete")}>Kept</button>
+          <button className={btn} disabled={pending} onClick={() => com("complete", isPast ? { actualTime } : {})}>Kept</button>
           <button className={btn} disabled={pending} onClick={() => com("delay", { minutes: 30 })}>Delay 30 min</button>
           <button className={btn} disabled={pending} onClick={() => setMode(mode === "reschedule" ? null : "reschedule")}>Reschedule</button>
           <button className={btn} disabled={pending} onClick={() => setMode(mode === "skip" ? null : "skip")}>Not kept…</button>
@@ -122,7 +138,7 @@ function ActionPanel({ item, tz, date, initialMode, onClose }: { item: TimelineI
       {item.type === "focus" && <Link href="/rhythm" className="btn btn-quiet">Open Rhythm</Link>}
 
       {mode === "complete" && (
-        <form className="grid grid-cols-2 gap-2 sm:grid-cols-4" onSubmit={(e) => { e.preventDefault(); ev("complete", { durationMinutes: duration ? Number(duration) : undefined, workoutType: wtype as "other", intensity: intensity ? Number(intensity) : undefined, notes: text || undefined }); }}>
+        <form className="grid grid-cols-2 gap-2 sm:grid-cols-4" onSubmit={(e) => { e.preventDefault(); ev("complete", { durationMinutes: duration ? Number(duration) : undefined, workoutType: wtype as "other", intensity: intensity ? Number(intensity) : undefined, notes: text || undefined, ...(isPast ? { actualTime } : {}) }); }}>
           <label className="text-xs text-ivory-dim">Minutes<input type="number" min={1} max={600} value={duration} onChange={(e) => setDuration(e.target.value)} placeholder="auto" className="field mt-1" aria-label="Workout minutes" /></label>
           <label className="text-xs text-ivory-dim">Type
             <select value={wtype} onChange={(e) => setWtype(e.target.value)} className="field mt-1" aria-label="Workout type">
@@ -227,6 +243,23 @@ function Canvas({ items, tz, date, nowIso }: { items: TimelineItem[]; tz: string
   const top = (iso: string) => ((minutesOfDay(iso, tz) - startHour * 60) / 60) * HOUR;
   const len = (i: TimelineItem) => (i.end ? Math.max(24, ((Date.parse(i.end) - Date.parse(i.start)) / 3_600_000) * HOUR) : 26);
 
+  // Overlapping items share the row side by side (lanes), so nothing hides another.
+  const lanes = (() => {
+    const px = timed.map((i) => ({ id: i.id, a: top(i.start), b: top(i.start) + len(i) })).sort((x, y) => x.a - y.a || x.b - y.b);
+    const out = new Map<string, { lane: number; of: number }>();
+    let cluster: { id: string; lane: number }[] = [], laneEnds: number[] = [], clusterEnd = -1;
+    const flush = () => { for (const c of cluster) out.set(c.id, { lane: c.lane, of: laneEnds.length }); cluster = []; laneEnds = []; };
+    for (const r of px) {
+      if (r.a >= clusterEnd) flush();
+      let lane = laneEnds.findIndex((e) => e <= r.a);
+      if (lane < 0) { lane = laneEnds.length; laneEnds.push(r.b); } else laneEnds[lane] = r.b;
+      cluster.push({ id: r.id, lane });
+      clusterEnd = Math.max(clusterEnd, r.b);
+    }
+    flush();
+    return out;
+  })();
+
   async function drop(item: TimelineItem, dy: number) {
     const deltaMin = Math.round((dy / HOUR) * 60 / SNAP) * SNAP;
     if (!deltaMin) return;
@@ -270,8 +303,8 @@ function Canvas({ items, tz, date, nowIso }: { items: TimelineItem[]; tz: string
               key={i.id}
               role={i.draggable ? "button" : undefined}
               aria-label={i.draggable ? `${i.title} at ${fmtTime(i.start, tz)}. Drag to move.` : undefined}
-              className={`absolute left-14 right-2 overflow-hidden rounded-[12px] border px-2.5 py-1 text-xs transition-shadow ${color} ${i.draggable ? "cursor-grab touch-none active:cursor-grabbing" : ""} ${isDrag ? "z-20 shadow-[0_18px_40px_-12px_rgb(0_0_0/0.7)] ring-1 ring-lime" : ""} ${i.state === "rescheduled" ? "opacity-50" : ""}`}
-              style={{ top: top(i.start) + (isDrag ? drag.dy : 0), height: len(i) }}
+              className={`absolute overflow-hidden rounded-[12px] border px-2.5 py-1 text-xs transition-shadow ${color} ${i.draggable ? "cursor-grab touch-none active:cursor-grabbing" : ""} ${isDrag ? "z-20 shadow-[0_18px_40px_-12px_rgb(0_0_0/0.7)] ring-1 ring-lime" : ""} ${i.state === "rescheduled" ? "opacity-50" : ""}`}
+              style={{ top: top(i.start) + (isDrag ? drag.dy : 0), height: len(i), ...(() => { const l = lanes.get(i.id) ?? { lane: 0, of: 1 }; return { left: `calc(3.5rem + (100% - 4rem) * ${l.lane / l.of})`, width: `calc((100% - 4rem) / ${l.of} - ${l.of > 1 ? 2 : 0}px)` }; })() }}
               onPointerDown={(e) => { if (!i.draggable) return; (e.target as HTMLElement).setPointerCapture(e.pointerId); setDrag({ id: i.id, dy: 0, y0: e.clientY }); }}
               onPointerMove={(e) => { if (!isDrag) return; const step = HOUR / (60 / SNAP); const dy = Math.round((e.clientY - drag.y0) / step) * step; setDrag({ ...drag, dy }); }}
               onPointerUp={(e) => { if (!isDrag) return; const step = HOUR / (60 / SNAP); const dy = Math.round((e.clientY - drag.y0) / step) * step; setDrag(null); void drop(i, dy); }}
