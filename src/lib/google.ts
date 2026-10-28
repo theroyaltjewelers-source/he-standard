@@ -246,6 +246,7 @@ export async function pullChanges(admin: SupabaseClient, userId: string, tz: str
           user_id: userId, ...mapped, external_source: "google", external_id: g.id, external_etag: g.etag,
           external_updated_at: g.updated, sync_status: "synced", reminder_offsets: [30],
           accountability: "off", // imported events get reminders; the user opts each into check-ins
+          timezone: tz,
         }).select("id").single();
         if (!error && ins) { res.created++; res.changedIds.push(ins.id); }
         continue;

@@ -1,4 +1,4 @@
-import { IconBell, IconFaith, IconJournal, IconMic, IconMoney, IconPlan, IconProgress, IconRhythm, IconSettings, IconToday, IconWord } from "./icons";
+import { IconBell, IconFaith, IconFitness, IconJournal, IconMic, IconMoney, IconPlan, IconProgress, IconRhythm, IconSettings, IconToday, IconWord } from "./icons";
 
 /** Mobile tab bar (Coach sits in the middle). */
 export const PRIMARY = [
@@ -11,6 +11,7 @@ export const PRIMARY = [
 export const SECONDARY = [
   { href: "/rhythm", label: "Rhythm", Icon: IconRhythm },
   { href: "/progress", label: "Progress", Icon: IconProgress },
+  { href: "/fitness", label: "Fitness", Icon: IconFitness },
   { href: "/plan", label: "Calendar", Icon: IconPlan },
   { href: "/money", label: "Money", Icon: IconMoney },
   { href: "/reminders", label: "Reminders", Icon: IconBell },

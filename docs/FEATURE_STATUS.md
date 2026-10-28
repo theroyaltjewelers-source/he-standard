@@ -1,9 +1,32 @@
 # Feature-status register
 
 Statuses: **Not started · Implemented · Tested · Blocked · Requires credentials · Requires device testing · Production verified**.
-"Tested" means covered by the automated suites: 67 unit tests (`npx vitest run`) and a 121-check end-to-end run (`tests/e2e/e2e.mjs`) against a local Postgres with the same schema and RLS, a real Web Push encryption round-trip, and a headless browser. "Production verified" lists the evidence.
+"Tested" means covered by the automated suites: 88 unit tests (`npx vitest run`, including controlled-clock rollover/DST tests) and a 150-check end-to-end run (`tests/e2e/e2e.mjs`) against a local Postgres with the same schema and RLS, a real Web Push encryption round-trip, and a headless browser. "Production verified" lists the evidence.
 
-Last updated: 2026-10-27 (v3). Production: migration `20261029000004_v3.sql` applied (all 3 new tables present, 0 public tables without RLS, 41 verses loaded); v3 build deployed — at 00:30 UTC on 28 Oct the scheduler's planner and dispatcher both answered 200 with the new v3 fields (`occurrences`, `awaiting_confirmation`, `paused`, `held`) and no errors.
+Last updated: 2026-10-27 (v4 — see the v4 section below). Previously (v3): Production: migration `20261029000004_v3.sql` applied (all 3 new tables present, 0 public tables without RLS, 41 verses loaded); v3 build deployed — at 00:30 UTC on 28 Oct the scheduler's planner and dispatcher both answered 200 with the new v3 fields (`occurrences`, `awaiting_confirmation`, `paused`, `held`) and no errors.
+
+## v4 — rollover, history, Today, fitness, reliability
+
+| Feature | Status | Evidence / notes |
+|---|---|---|
+| Automatic midnight rollover with the app closed (server-side) | Tested | The 15-minute planner reconciles every user: generates recurring occurrences, records unresolved activities, finalizes ended days. E2E §9b simulates 3 days closed. |
+| Reconcile after inactivity (back-fill up to 30 days) | Tested | `generationWindow` unit tests; E2E §9b (back-fill, idempotent re-run). |
+| Recurring tasks: one record per day, never a checkbox that resets | Tested | `task_series` + unique (series_id, occurrence_date); yesterday's completion leaves today's untouched (E2E). Pause keeps history. |
+| Time zones, DST (23/25 h days), month/year boundaries, cross-midnight events, travel | Tested | 16 controlled-clock unit tests; events keep their own zone; device-zone banner offers a switch (never silent). |
+| Open app rolls over at local midnight / on wake | Implemented | `DayWatcher` refreshes at local midnight and on focus/visibility/online if the date changed. |
+| Stored daily scores with policy version (final vs provisional) | Tested | `daily_scores`; past days show the stored score and policy, never silently recalculated. |
+| Modification history for tasks, commitments, activities, events, workouts, prayers, habits | Tested | `record_revisions` trigger; users can read, not forge (E2E). |
+| Late confirmations marked "reported later" | Tested | `confirmed_at` + `retrospective` on all confirmable records; E2E completes a past occurrence. |
+| Previous-day navigator (exact record of that day) | Tested | Date picker; stored score, insight, check-in answers, workouts, journal, moved tasks. |
+| Today: live clock, Hijri date, next prayer countdown, top-3 priorities, "Plan my day with the Coach" | Tested | E2E §9b. |
+| Task detail panel: Start / Complete with evidence / Reschedule with conflicts / Not doing it / history / reminders / notes | Tested | E2E §4. |
+| Day canvas: overlapping items in side-by-side lanes | Implemented | Found during v4 testing (items hid each other). |
+| Fitness: exercises, sets, reps, loads, cardio time/distance, body weight, sleep, PRs (Epley e1RM), weekly consistency, volume | Tested | `/fitness`; unit tests for the math; E2E logs a session and a reading. |
+| Apple Health / Health Connect import | **Blocked** | Not readable from a web app; requires the native app. Records carry `source` (manual/imported) for when it exists. |
+| Scheduler run log and System health (Settings) | Tested | `job_runs` written by planner and dispatcher; Settings shows heartbeats, failed notifications, stuck syncs. |
+| Google Calendar outbox with retries/backoff and dead-letter | Implemented | Failed pushes/deletes are queued (1 min → 6 h backoff, 8 attempts), shown in Settings with Retry. Needs Google credentials to verify live. |
+| Atomic Coach confirmations; idempotent Coach requests | Tested | Three concurrent confirms execute once (E2E); `ai_requests` keyed by request id. |
+| Voice orb driven by real states (idle, listening, processing, speaking, confirm, error) | Implemented | Reduced-motion fallback. Requires device testing for speech APIs. |
 
 ## Core
 

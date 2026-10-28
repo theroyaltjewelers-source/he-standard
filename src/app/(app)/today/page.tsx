@@ -16,6 +16,10 @@ import { PushToggle } from "@/components/push-toggle";
 import { CommandCenter } from "@/components/command-center";
 import { getVapidPublicKey } from "@/lib/app-config";
 import { logHabit } from "@/app/actions/goals";
+import { reconcileUser } from "@/lib/rollover";
+import { POLICY_V1 } from "@/lib/scoring";
+import { LiveClock, CountdownTo } from "@/components/live-clock";
+import { todayIn } from "@/lib/time";
 
 export const metadata = { title: "Today" };
 
@@ -25,12 +29,19 @@ export const metadata = { title: "Today" };
  */
 export default async function Today({ searchParams }: PageProps<"/today">) {
   const sp = await searchParams;
-  const { supabase, profile, today } = await requireUser();
+  const { supabase, user, profile, today } = await requireUser();
   const tz = profile.timezone;
   const now = new Date();
   const date = typeof sp.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.date) ? sp.date : today;
   const isToday = date === today;
   const wk = weekStart(date);
+  const isPast = date < today;
+
+  // Opening the app after a gap: create any missing occurrences and stored scores first.
+  const { data: rec } = await supabase.from("user_preferences").select("last_reconciled_on").maybeSingle();
+  if (!rec?.last_reconciled_on || rec.last_reconciled_on < today) {
+    try { await reconcileUser(supabase, user.id, tz, today, todayIn(tz, new Date(profile.created_at ?? now))); } catch { /* the planner retries every 15 minutes */ }
+  }
 
   const [{ data: prefs }, { data: plan }, { data: overdue }, { data: habits }, { data: habitLogs }, { data: sessions }, series, { data: prayerSettings }, { data: prayerConf }, { count: verseCount }, { count: pendingMemories }, events, { data: goals }] = await Promise.all([
     supabase.from("user_preferences").select("midday_checkin_time").maybeSingle(),
@@ -58,6 +69,28 @@ export default async function Today({ searchParams }: PageProps<"/today">) {
     ? await supabase.from("quran_verses").select("*").order("surah").order("ayah").range(pickIndex(date, profile.id, verseCount), pickIndex(date, profile.id, verseCount))
     : { data: [] };
   const verse = (verseRows?.[0] ?? null) as QuranVerse | null;
+
+  // Top three priorities: morning commitments first, then tasks marked as priorities.
+  const priorities = [
+    ...timeline.items.filter((i) => i.type === "commitment"),
+    ...timeline.items.filter((i) => i.type === "task" && i.meta?.priority),
+    ...timeline.untimedTasks.filter((t) => t.is_top_priority).map((t) => ({ id: `u-${t.id}`, title: t.title, state: t.status === "done" ? "completed" : t.status === "missed" ? "skipped" : "upcoming", start: null as string | null })),
+  ].slice(0, 3) as { id: string; title: string; state: string; start: string | null }[];
+
+  // What was recorded on a past day (shown as recorded, never with today's state).
+  const history = isPast ? await (async () => {
+    const [{ data: snap }, { data: journal }, { data: sess }, { data: workouts }, { data: moved }] = await Promise.all([
+      supabase.from("daily_scores").select("*").eq("score_date", date).order("computed_at", { ascending: false }),
+      supabase.from("journal_entries").select("id,title,body,mood,guided_mode").eq("entry_date", date).order("created_at"),
+      supabase.from("accountability_sessions").select("id,kind,status,completed_at").eq("session_date", date),
+      supabase.from("workout_logs").select("id,workout_type,duration_minutes,intensity,notes").eq("performed_on", date),
+      supabase.from("tasks").select("id,title,scheduled_for,status").eq("original_scheduled_for", date).neq("scheduled_for", date),
+    ]);
+    const ids = (sess ?? []).map((x) => x.id);
+    const { data: answers } = ids.length ? await supabase.from("accountability_answers").select("session_id,question,answer,skipped,follow_up_answer").in("session_id", ids) : { data: [] };
+    return { snap: snap ?? [], journal: journal ?? [], sess: sess ?? [], answers: answers ?? [], workouts: workouts ?? [], moved: moved ?? [] };
+  })() : null;
+  const storedScore = history?.snap.find((x) => x.policy_version === POLICY_V1.version) ?? history?.snap[0] ?? null;
 
   const od = isToday ? ((overdue ?? []) as Task[]) : [];
   const hs = (habits ?? []) as Habit[];
@@ -97,20 +130,29 @@ export default async function Today({ searchParams }: PageProps<"/today">) {
         <div>
           <p className="text-ivory-dim">{isToday ? `${greeting}${profile.display_name ? `, ${profile.display_name}` : ""}.` : "Viewing another day"}</p>
           <h1 className="h-page mt-1">{formatLocalDate(date, "EEEE, MMMM d")}</h1>
-          <p className="mt-1 text-sm text-ivory-faint">{hijriDate(date, profile.hijri_adjustment_days)}</p>
+          <p className="mt-1 text-sm text-ivory-faint">{hijriDate(date, profile.hijri_adjustment_days)}{isToday && <> · <LiveClock timeZone={tz} /></>}</p>
           {sp.welcome && <p className="mt-3 text-sm text-emerald">You&apos;re set up. Start with the morning check-in.</p>}
           {sp.checkin === "morning" && <p className="mt-3 text-sm text-emerald">Morning commitments recorded. Reminders are set for each.</p>}
           {sp.checkin === "midday" && <p className="mt-3 text-sm text-emerald">Midday check-in recorded.</p>}
           {sp.checkin === "evening" && <p className="mt-3 text-sm text-emerald">Evening review recorded.</p>}
         </div>
-        <nav className="seg" aria-label="Day">
-          <Link href={`/today?date=${shiftDate(date, -1)}`} aria-label="Previous day">‹</Link>
-          <Link href="/today" aria-current={isToday ? "true" : undefined}>Today</Link>
-          <Link href={`/today?date=${shiftDate(date, 1)}`} aria-label="Next day">›</Link>
-        </nav>
+        <div className="flex flex-wrap items-center gap-2">
+          <nav className="seg" aria-label="Day">
+            <Link href={`/today?date=${shiftDate(date, -1)}`} aria-label="Previous day">‹</Link>
+            <Link href="/today" aria-current={isToday ? "true" : undefined}>Today</Link>
+            <Link href={`/today?date=${shiftDate(date, 1)}`} aria-label="Next day">›</Link>
+          </nav>
+          <form action="/today" className="flex items-center gap-1">
+            <input type="date" name="date" defaultValue={date} max={shiftDate(today, 60)} className="field h-9 w-auto py-1 text-sm" aria-label="Go to date" />
+            <button className="chip">Go</button>
+          </form>
+        </div>
       </header>
 
-      <div className="max-w-2xl"><PushToggle vapidKey={await getVapidPublicKey()} compact /></div>
+      {isToday && <div className="max-w-2xl"><PushToggle vapidKey={await getVapidPublicKey()} compact /></div>}
+      {isPast && (
+        <p className="rounded-[14px] border border-line bg-surface px-4 py-2.5 text-sm text-ivory-dim">You&apos;re viewing a past day exactly as it was recorded. Anything you record now is saved as <b>reported later</b>.</p>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-12">
         {/* Now & next */}
@@ -132,13 +174,34 @@ export default async function Today({ searchParams }: PageProps<"/today">) {
           ) : (
             <>
               <p className="eyebrow">{isToday ? "Clear for now" : "This day"}</p>
-              <p className="mt-2 text-2xl font-semibold tracking-tight">{isToday ? "Nothing else scheduled today." : `${actionable.length} scheduled items`}</p>
-              <Link href={`/plan/new?date=${date}`} className="btn btn-quiet mt-4">Schedule something</Link>
+              <p className="mt-2 text-2xl font-semibold tracking-tight">{isToday ? "Nothing else scheduled today." : isPast ? `${actionable.length} item${actionable.length === 1 ? "" : "s"} on record` : `${actionable.length} scheduled item${actionable.length === 1 ? "" : "s"}`}</p>
+              {!isPast && <Link href={`/plan/new?date=${date}`} className="btn btn-quiet mt-4">Schedule something</Link>}
             </>
           )}
           {plan?.intention && <p className="mt-5 border-l-2 border-lime pl-3 text-ivory">{plan.intention}</p>}
           {plan?.avoid_behavior && <p className="mt-2 text-sm text-ivory-dim"><span className="text-ivory-faint">Avoiding: </span>{plan.avoid_behavior}</p>}
         </section>
+
+        {/* Today's three priorities */}
+        {(priorities.length > 0 || isToday) && (
+          <section aria-labelledby="prio-h" className="card lg:col-span-7">
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 id="prio-h" className="eyebrow">{isPast ? "Priorities that day" : "Today's three priorities"}</h2>
+              {isToday && <Link href={`/coach?q=${encodeURIComponent("Plan my day today around my calendar, prayers, goals and deadlines. Don't move confirmed appointments.")}`} className="text-xs text-accent hover:underline">Plan my day with the Coach</Link>}
+            </div>
+            {priorities.length ? (
+              <ol className="mt-2 space-y-2">
+                {priorities.map((p, k) => (
+                  <li key={p.id} className="flex items-center gap-3">
+                    <span className={`grid size-6 shrink-0 place-items-center rounded-full text-xs tabular ${p.state === "completed" || p.state === "late" ? "bg-emerald text-ground" : p.state === "skipped" ? "bg-brass text-ground" : "border border-line-strong text-ivory-dim"}`}>{k + 1}</span>
+                    <span className={`min-w-0 flex-1 truncate ${p.state === "completed" || p.state === "late" ? "text-ivory-dim line-through decoration-ivory-faint" : ""}`}>{p.title}</span>
+                    {p.start && <span className="shrink-0 text-xs tabular text-ivory-faint">{formatInZone(p.start, tz, "h:mm a")}</span>}
+                  </li>
+                ))}
+              </ol>
+            ) : <p className="mt-2 text-sm text-ivory-dim">None set yet. <Link href="/checkin/morning" className="text-accent hover:underline">Choose up to three</Link>.</p>}
+          </section>
+        )}
 
         {/* Spiritual companion — kept separate from productivity scoring */}
         <section aria-labelledby="pr-h" className="card card-violet lg:col-span-5">
@@ -148,7 +211,10 @@ export default async function Today({ searchParams }: PageProps<"/today">) {
           </div>
           {pcfg ? (
             <>
-              {upcomingPrayer && <p className="mt-2 text-2xl font-semibold tracking-tight">{PRAYER_LABEL[upcomingPrayer.prayer]} <span className="text-ivory-dim">{formatInZone(upcomingPrayer.at, tz, "h:mm a")}{upcomingPrayer.date !== today ? " tomorrow" : ""}</span></p>}
+              {upcomingPrayer && <>
+                <p className="mt-2 text-2xl font-semibold tracking-tight">{PRAYER_LABEL[upcomingPrayer.prayer]} <span className="text-ivory-dim">{formatInZone(upcomingPrayer.at, tz, "h:mm a")}{upcomingPrayer.date !== today ? " tomorrow" : ""}</span></p>
+                <p className="text-sm text-accent"><CountdownTo target={upcomingPrayer.at.toISOString()} /></p>
+              </>}
               {awaitingConfirm.length > 0 && (
                 <div className="mt-3 flex flex-wrap items-center gap-1.5">
                   <span className="mr-1 text-sm text-ivory-faint">Prayed?</span>
@@ -193,20 +259,73 @@ export default async function Today({ searchParams }: PageProps<"/today">) {
 
           <section id="anytime" aria-labelledby="t-h" className="card scroll-mt-24">
             <div className="flex items-baseline justify-between">
-              <h2 id="t-h" className="h-section">Anytime today</h2>
+              <h2 id="t-h" className="h-section">{isToday ? "Anytime today" : "Anytime"}</h2>
               <Link href="/word" className="text-sm text-ivory-dim hover:text-ivory">All tasks</Link>
             </div>
             <ul className="mt-1 divide-y divide-line">
-              {od.map((t) => <TaskItem key={t.id} t={t} overdue dueLabel={null} tomorrow={today} showDate={`from ${formatLocalDate(t.scheduled_for!, "MMM d")}`} />)}
-              {timeline.untimedTasks.map((t) => <TaskItem key={t.id} t={t} tomorrow={shiftDate(date, 1)} dueLabel={null} overdue={false} />)}
+              {od.map((t) => <TaskItem key={t.id} tz={tz} t={t} overdue dueLabel={null} tomorrow={today} showDate={`from ${formatLocalDate(t.scheduled_for!, "MMM d")}`} />)}
+              {timeline.untimedTasks.map((t) => <TaskItem key={t.id} tz={tz} t={t} tomorrow={shiftDate(date, 1)} dueLabel={null} overdue={false} />)}
             </ul>
             {!od.length && !timeline.untimedTasks.length && <p className="py-2 text-sm text-ivory-faint">No untimed tasks.</p>}
-            <div className="mt-3"><QuickTask date={date} goals={goals ?? []} /></div>
+            {!isPast && <div className="mt-3"><QuickTask date={date} goals={goals ?? []} /></div>}
           </section>
         </div>
 
         <aside className="space-y-6 lg:col-span-5">
-          <div className="card"><IntegrityPanel today={todayScore} series={series} /></div>
+          {isPast && storedScore ? (
+            <div className="card">
+              <p className="eyebrow">Daily integrity · as recorded</p>
+              <p className="metric mt-2 text-6xl">{(storedScore.integrity as { score: number | null }).score ?? "—"}</p>
+              <p className="mt-2 text-sm text-ivory-dim">{(storedScore.integrity as { explanation: string }).explanation}</p>
+              <p className="mt-2 text-xs text-ivory-faint">
+                Stored {storedScore.final ? "when the day ended" : "during the day (provisional)"} · policy {storedScore.policy_version}
+                {(storedScore.evolution as { overall: number | null }).overall !== null && ` · 7-day evolution ${(storedScore.evolution as { overall: number }).overall}`}
+              </p>
+              {storedScore.policy_version !== POLICY_V1.version && <p className="mt-1 text-xs text-brass">Recorded under an earlier scoring policy; not recalculated.</p>}
+            </div>
+          ) : (
+            <div className="card">
+              {isPast && <p className="mb-2 text-xs text-brass">No score was stored for this day (it predates score snapshots). Shown recalculated with current policy {POLICY_V1.version}.</p>}
+              <IntegrityPanel today={todayScore} series={series} />
+            </div>
+          )}
+          {isPast && storedScore?.insight && (
+            <div className="card card-violet">
+              <p className="eyebrow">Insight shown that day</p>
+              <p className="mt-2 font-semibold">{(storedScore.insight as { title: string }).title}</p>
+              <p className="mt-1 text-sm text-ivory-dim">{(storedScore.insight as { recommendation: string }).recommendation}</p>
+            </div>
+          )}
+          {history && (
+            <section aria-labelledby="rec-h" className="card space-y-4">
+              <h2 id="rec-h" className="h-section">Recorded that day</h2>
+              <div>
+                <p className="text-sm text-ivory-dim">Check-ins</p>
+                {history.sess.length ? history.sess.map((x) => (
+                  <details key={x.id} className="mt-1 text-sm">
+                    <summary className="cursor-pointer">{x.kind[0].toUpperCase() + x.kind.slice(1)} · {x.status === "completed" ? "completed" : "not completed"}</summary>
+                    <ul className="mt-1 space-y-1.5 border-l border-line pl-3 text-xs">
+                      {history.answers.filter((a) => a.session_id === x.id).map((a, k) => <li key={k}><p className="text-ivory-faint">{a.question}</p><p>{a.skipped ? <i className="text-ivory-faint">skipped</i> : a.answer}{a.follow_up_answer ? ` — ${a.follow_up_answer}` : ""}</p></li>)}
+                    </ul>
+                  </details>
+                )) : <p className="text-sm text-ivory-faint">None recorded.</p>}
+              </div>
+              <div>
+                <p className="text-sm text-ivory-dim">Workouts</p>
+                {history.workouts.length ? <ul className="text-sm">{history.workouts.map((w) => <li key={w.id}>{w.workout_type} · {w.duration_minutes ?? "?"} min{w.intensity ? ` · intensity ${w.intensity}/5` : ""}</li>)}</ul> : <p className="text-sm text-ivory-faint">None logged.</p>}
+              </div>
+              <div>
+                <p className="text-sm text-ivory-dim">Journal</p>
+                {history.journal.length ? <ul className="text-sm">{history.journal.map((j) => <li key={j.id}><Link href={`/journal/${j.id}`} className="hover:underline">{j.title || j.body.slice(0, 60)}</Link>{j.mood ? <span className="text-ivory-faint"> · mood {j.mood}/5</span> : null}</li>)}</ul> : <p className="text-sm text-ivory-faint">No entry.</p>}
+              </div>
+              {history.moved.length > 0 && (
+                <div>
+                  <p className="text-sm text-ivory-dim">Moved to another day</p>
+                  <ul className="text-sm">{history.moved.map((m) => <li key={m.id}>{m.title} <span className="text-ivory-faint">→ {m.scheduled_for} ({m.status})</span></li>)}</ul>
+                </div>
+              )}
+            </section>
+          )}
 
           {attention.length > 0 && (
             <section aria-labelledby="next-h" className="card">

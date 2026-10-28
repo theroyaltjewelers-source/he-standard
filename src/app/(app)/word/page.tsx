@@ -7,6 +7,8 @@ import { QuickTask } from "@/components/quick-task";
 import { CommitmentItem } from "@/components/commitment-item";
 import { CommitmentForm } from "@/components/commitment-form";
 import type { Commitment, Task } from "@/lib/types";
+import { setSeriesActive } from "@/app/actions/tasks";
+import { formatClock } from "@/lib/time";
 
 export const metadata = { title: "My Word" };
 
@@ -31,6 +33,9 @@ export default async function Word({ searchParams }: PageProps<"/word">) {
       : tq.in("status", ["done", "missed"]).order("updated_at", { ascending: false }).limit(100),
     supabase.from("goals").select("id,title").eq("status", "active"),
   ]);
+  const { data: seriesRows } = await supabase.from("task_series").select("id,title,recurrence,weekdays,due_time,active,starts_on").order("active", { ascending: false }).order("created_at");
+  const REPEAT: Record<string, string> = { daily: "Every day", weekdays: "Weekdays", weekly: "Weekly", monthly: "Monthly" };
+  const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const commitments = (cs ?? []) as Commitment[];
   const past = (recent ?? []) as Pick<Commitment, "id" | "commitment_date" | "title" | "status" | "made_to">[];
   const tasks = (tdata ?? []) as Task[];
@@ -111,6 +116,27 @@ export default async function Word({ searchParams }: PageProps<"/word">) {
           </div>
         </div>
         {show === "open" && <div className="mb-10"><QuickTask date={today} goals={goals ?? []} /></div>}
+        {(seriesRows ?? []).length > 0 && (
+          <div className="mb-10">
+            <h3 className="text-sm text-ivory-dim">Repeating tasks</h3>
+            <p className="text-xs text-ivory-faint">Each day gets its own record — yesterday stays exactly as you left it.</p>
+            <ul className="mt-2 divide-y divide-line">
+              {(seriesRows ?? []).map((r) => (
+                <li key={r.id} className={`flex items-center justify-between gap-3 py-3 ${r.active ? "" : "opacity-60"}`}>
+                  <span className="min-w-0">
+                    <span className="block truncate">{r.title}</span>
+                    <span className="block text-xs text-ivory-faint">{REPEAT[r.recurrence]}{r.recurrence === "weekly" && r.weekdays?.length ? ` (${r.weekdays.map((d: number) => DOW[d]).join(", ")})` : ""}{r.due_time ? ` · by ${formatClock(r.due_time)}` : ""}{r.active ? "" : " · paused"}</span>
+                  </span>
+                  <form action={setSeriesActive}>
+                    <input type="hidden" name="id" value={r.id} />
+                    <input type="hidden" name="active" value={String(!r.active)} />
+                    <button className="chip">{r.active ? "Pause" : "Resume"}</button>
+                  </form>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {tasks.length === 0 ? (
           <Empty>{show === "open" ? "No open tasks." : "Nothing resolved yet."}</Empty>
         ) : (
@@ -120,7 +146,7 @@ export default async function Word({ searchParams }: PageProps<"/word">) {
                 <h3 className={`text-sm ${label === "Overdue" ? "text-brass" : "text-ivory-dim"}`}>{label}</h3>
                 <ul className="divide-y divide-line">
                   {items.map((t) => (
-                    <TaskItem key={t.id} t={t} tomorrow={shiftDate(today, 1)}
+                    <TaskItem key={t.id} tz={tz} t={t} tomorrow={shiftDate(today, 1)}
                       showDate={show === "done" && t.scheduled_for ? formatLocalDate(t.scheduled_for, "MMM d") : null}
                       dueLabel={t.due_at ? formatInZone(t.due_at, tz, "h:mm a") : null}
                       overdue={(t.scheduled_for ?? today) < today || (!!t.due_at && Date.parse(t.due_at) < now)} />

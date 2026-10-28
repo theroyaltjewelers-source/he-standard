@@ -9,8 +9,8 @@ export interface Series { key: string; label: string; color: string; values: (nu
  * Crosshair tooltip on pointer and keyboard (arrow keys), a screen-reader
  * summary, and a table view.
  */
-export function TrendChart({ labels, series, height = 220, yMax = 100, yLabel = "", summary, decimals = 0 }: {
-  labels: string[]; series: Series[]; height?: number; yMax?: number; yLabel?: string; summary: string; decimals?: number;
+export function TrendChart({ labels, series, height = 220, yMax = 100, yMin = 0, yLabel = "", summary, decimals = 0 }: {
+  labels: string[]; series: Series[]; height?: number; yMax?: number; yMin?: number; yLabel?: string; summary: string; decimals?: number;
 }) {
   const format = (v: number) => v.toFixed(decimals);
   const id = useId();
@@ -19,7 +19,7 @@ export function TrendChart({ labels, series, height = 220, yMax = 100, yLabel = 
   const W = 640, H = height, padL = 32, padR = 12, padT = 12, padB = 26;
   const n = labels.length;
   const x = (i: number) => padL + (n <= 1 ? (W - padL - padR) / 2 : (i / (n - 1)) * (W - padL - padR));
-  const y = (v: number) => padT + (1 - Math.min(v, yMax) / yMax) * (H - padT - padB);
+  const y = (v: number) => padT + (1 - (Math.max(yMin, Math.min(v, yMax)) - yMin) / (yMax - yMin || 1)) * (H - padT - padB);
 
   const paths = useMemo(() => series.map((s) => {
     const segs: string[] = [];
@@ -31,7 +31,7 @@ export function TrendChart({ labels, series, height = 220, yMax = 100, yLabel = 
     if (cur) segs.push(cur);
     const areas = s.area ? segs.map((d) => {
       const pts = d.slice(1).split("L").map((p) => p.split(",").map(Number));
-      return `${d}L${pts[pts.length - 1][0]},${y(0)}L${pts[0][0]},${y(0)}Z`;
+      return `${d}L${pts[pts.length - 1][0]},${y(yMin)}L${pts[0][0]},${y(yMin)}Z`;
     }) : [];
     // Isolated points (a measured value with null neighbours) still need a visible mark.
     const dots = s.values.map((v, i) => (v !== null && (i === 0 || s.values[i - 1] === null) && (i === n - 1 || s.values[i + 1] === null) ? i : -1)).filter((i) => i >= 0);
@@ -81,9 +81,9 @@ export function TrendChart({ labels, series, height = 220, yMax = 100, yLabel = 
                 </linearGradient>
               ))}
             </defs>
-            {(yMax === 100 ? [0, 50, 100] : [0, Math.round(yMax / 2), yMax]).map((t) => (
+            {(yMin === 0 && yMax === 100 ? [0, 50, 100] : [yMin, Math.round((yMin + yMax) / 2), yMax]).map((t) => (
               <g key={t}>
-                <line x1={padL} x2={W - padR} y1={y(t)} y2={y(t)} stroke="var(--color-line)" strokeWidth="1" strokeDasharray={t === 0 ? undefined : "2 4"} />
+                <line x1={padL} x2={W - padR} y1={y(t)} y2={y(t)} stroke="var(--color-line)" strokeWidth="1" strokeDasharray={t === yMin ? undefined : "2 4"} />
                 <text x={padL - 8} y={y(t) + 4} textAnchor="end" className="fill-[var(--color-ivory-faint)] text-[11px] tabular">{t}</text>
               </g>
             ))}

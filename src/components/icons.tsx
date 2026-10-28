@@ -24,3 +24,4 @@ export const IconProgress = (p: SVGProps<SVGSVGElement>) => (<svg {...base(p)}><
 export const IconMoney = (p: SVGProps<SVGSVGElement>) => (<svg {...base(p)}><rect x="3" y="6.5" width="18" height="11" rx="1.5" /><circle cx="12" cy="12" r="2.5" /></svg>);
 export const IconStop = (p: SVGProps<SVGSVGElement>) => (<svg {...base(p)}><rect x="7" y="7" width="10" height="10" rx="1" /></svg>);
 export const IconSpeaker = (p: SVGProps<SVGSVGElement>) => (<svg {...base(p)}><path d="M4 9.5h3l5-4v13l-5-4H4z" /><path d="M16 9a4 4 0 0 1 0 6" /></svg>);
+export const IconFitness = (p: SVGProps<SVGSVGElement>) => (<svg {...base(p)}><path d="M3 12h18M6 8v8M18 8v8M3.5 10v4M20.5 10v4" /></svg>);

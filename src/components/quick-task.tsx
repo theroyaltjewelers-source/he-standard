@@ -14,9 +14,14 @@ export function QuickTask({ date, goals = [] }: { date: string; goals?: { id: st
         <button className="btn btn-quiet shrink-0" disabled={pending} data-state={pending ? "loading" : undefined}>Add</button>
       </div>
       <details className="text-sm">
-        <summary className="cursor-pointer text-ivory-faint">Deadline, priority, goal</summary>
+        <summary className="cursor-pointer text-ivory-faint">Deadline, repeat, priority, goal</summary>
         <div className="mt-3 grid grid-cols-2 gap-3">
           <label className="text-ivory-dim">Due by<input type="time" name="due_time" className="field mt-1" /></label>
+          <label className="text-ivory-dim">Repeats
+            <select name="repeat" defaultValue="none" className="field mt-1">
+              <option value="none">Does not repeat</option><option value="daily">Every day</option><option value="weekdays">Weekdays</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option>
+            </select>
+          </label>
           <label className="text-ivory-dim">Importance
             <select name="priority" defaultValue="2" className="field mt-1"><option value="1">High</option><option value="2">Normal</option><option value="3">Low</option></select>
           </label>

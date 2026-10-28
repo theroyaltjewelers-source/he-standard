@@ -5,6 +5,7 @@ import { z } from "zod";
 import { requireUser } from "@/lib/session";
 import { syncCommitmentReminders, syncTaskReminders } from "@/lib/reminders";
 import { shiftDate, zonedToUtc } from "@/lib/time";
+import { generateSeries } from "@/lib/rollover";
 import type { Commitment, Task } from "@/lib/types";
 
 export type ActionState = { error?: string; ok?: boolean } | undefined;
@@ -29,6 +30,7 @@ const taskSchema = z.object({
   priority: z.coerce.number().int().min(1).max(3),
   goal_id: z.uuid().or(z.literal("")),
   is_top_priority: z.boolean(),
+  repeat: z.enum(["none", "daily", "weekdays", "weekly", "monthly"]),
 });
 
 export async function createTask(_: ActionState, form: FormData): Promise<ActionState> {
@@ -37,9 +39,23 @@ export async function createTask(_: ActionState, form: FormData): Promise<Action
     title: str(form, "title"), notes: str(form, "notes"), scheduled_for: str(form, "scheduled_for") || today,
     due_time: str(form, "due_time"), priority: str(form, "priority") || 2, goal_id: str(form, "goal_id"),
     is_top_priority: form.get("is_top_priority") === "on",
+    repeat: str(form, "repeat") || "none",
   });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
   const d = parsed.data;
+  if (d.repeat !== "none") {
+    // A repeating task is a series; each day gets its own record (history never resets).
+    const startsOn = d.scheduled_for || today;
+    const { data: series, error: sErr } = await supabase.from("task_series").insert({
+      user_id: user.id, title: d.title, notes: d.notes || null, goal_id: d.goal_id || null, recurrence: d.repeat,
+      weekdays: d.repeat === "weekly" ? [new Date(`${startsOn}T12:00:00Z`).getUTCDay()] : [],
+      due_time: d.due_time || null, timezone: profile.timezone, starts_on: startsOn, priority: d.priority, is_top_priority: d.is_top_priority,
+    }).select("id").single();
+    if (sErr) return { error: sErr.message };
+    await generateSeries(supabase, user.id, today, profile.timezone, series.id);
+    refresh();
+    return { ok: true };
+  }
   if (d.is_top_priority) {
     const { count } = await supabase.from("tasks").select("id", { count: "exact", head: true })
       .eq("scheduled_for", d.scheduled_for).eq("is_top_priority", true).neq("status", "cancelled");
@@ -57,12 +73,14 @@ export async function createTask(_: ActionState, form: FormData): Promise<Action
 }
 
 export async function completeTask(form: FormData) {
-  const { supabase, user, profile } = await requireUser();
+  const { supabase, user, profile, today } = await requireUser();
   const id = str(form, "id");
   const evidence = str(form, "evidence");
+  const { data: before } = await supabase.from("tasks").select("scheduled_for").eq("id", id).maybeSingle();
   const { data } = await supabase.from("tasks").update({
     status: "done", completed_at: new Date().toISOString(),
     verification: evidence ? "evidence" : "self_reported", evidence: evidence || null, miss_reason: null,
+    confirmed_at: new Date().toISOString(), retrospective: !!before?.scheduled_for && before.scheduled_for < today,
   }).eq("id", id).select("*").single<Task>();
   if (data) await syncTaskReminders(supabase, user.id, data, profile.timezone);
   refresh();
@@ -73,17 +91,19 @@ export async function completeTask(form: FormData) {
  * database has confirmed the change, so the UI never shows a completion that
  * wasn't saved.
  */
-export async function setTaskDone(id: string, done: boolean): Promise<{ ok?: true; error?: string }> {
-  const { supabase, user, profile } = await requireUser();
+export async function setTaskDone(id: string, done: boolean): Promise<{ ok?: true; error?: string; retrospective?: boolean }> {
+  const { supabase, user, profile, today } = await requireUser();
+  const { data: before } = await supabase.from("tasks").select("scheduled_for").eq("id", id).maybeSingle();
+  const retrospective = done && !!before?.scheduled_for && before.scheduled_for < today;
   const patch = done
-    ? { status: "done", completed_at: new Date().toISOString(), verification: "self_reported", miss_reason: null }
-    : { status: "pending", completed_at: null, verification: "none", evidence: null, miss_reason: null };
+    ? { status: "done", completed_at: new Date().toISOString(), verification: "self_reported", miss_reason: null, confirmed_at: new Date().toISOString(), retrospective }
+    : { status: "pending", completed_at: null, verification: "none", evidence: null, miss_reason: null, confirmed_at: null, retrospective: false };
   const { data, error } = await supabase.from("tasks").update(patch).eq("id", id).select("*").maybeSingle<Task>();
   if (error) return { error: error.message };
   if (!data) return { error: "That task no longer exists." };
   await syncTaskReminders(supabase, user.id, data, profile.timezone);
   refresh();
-  return { ok: true };
+  return { ok: true, retrospective };
 }
 
 export async function missTask(form: FormData) {
@@ -118,6 +138,7 @@ export async function postponeTask(form: FormData) {
   }
   const { data } = await supabase.from("tasks").update({
     scheduled_for: to, due_at, postponed_count: t.postponed_count + 1, is_top_priority: false,
+    original_scheduled_for: t.original_scheduled_for ?? t.scheduled_for, original_due_at: t.original_due_at ?? t.due_at,
   }).eq("id", id).select("*").single<Task>();
   if (data) await syncTaskReminders(supabase, user.id, data, profile.timezone);
   refresh();
@@ -196,6 +217,74 @@ export async function resolveCommitment(_: ActionState, form: FormData): Promise
   }).eq("id", d.id).select("*").single<Commitment>();
   if (error) return { error: error.message };
   await syncCommitmentReminders(supabase, user.id, data, profile.timezone);
+  refresh();
+  return { ok: true };
+}
+
+/** Pause, resume or end a repeating task. Past occurrences are never touched. */
+export async function setSeriesActive(form: FormData) {
+  const { supabase, user, profile, today } = await requireUser();
+  const id = str(form, "id");
+  const active = str(form, "active") === "true";
+  await supabase.from("task_series").update({ active, ...(active ? { last_generated_on: null } : {}) }).eq("id", id);
+  if (!active) {
+    // Remove only future, untouched occurrences; today's and earlier stay as recorded.
+    const { data: future } = await supabase.from("tasks").select("id").eq("series_id", id).gt("scheduled_for", today).eq("status", "pending");
+    for (const t of future ?? []) await supabase.from("reminders").delete().eq("entity_type", "task").eq("entity_id", t.id).eq("status", "scheduled");
+    if (future?.length) await supabase.from("tasks").delete().in("id", future.map((t) => t.id));
+  } else {
+    await generateSeries(supabase, user.id, today, profile.timezone, id);
+  }
+  refresh();
+}
+
+export interface TaskDetail {
+  task: Task;
+  goal: string | null;
+  series: { recurrence: string; due_time: string | null } | null;
+  reminders: { send_at: string; title: string; status: string }[];
+  history: { at: string; op: string; actor: string; changes: { field: string; from: unknown; to: unknown }[] }[];
+  seriesHistory: { date: string; status: string; retrospective: boolean }[];
+}
+
+/** Everything the task detail panel shows, read under RLS. */
+export async function getTaskDetail(id: string): Promise<TaskDetail | { error: string }> {
+  const { supabase } = await requireUser();
+  const { data: task } = await supabase.from("tasks").select("*").eq("id", id).maybeSingle<Task>();
+  if (!task) return { error: "That task no longer exists." };
+  const [{ data: goal }, { data: series }, { data: rem }, { data: rev }, { data: siblings }] = await Promise.all([
+    task.goal_id ? supabase.from("goals").select("title").eq("id", task.goal_id).maybeSingle() : Promise.resolve({ data: null }),
+    task.series_id ? supabase.from("task_series").select("recurrence,due_time").eq("id", task.series_id).maybeSingle() : Promise.resolve({ data: null }),
+    supabase.from("reminders").select("send_at,title,status").eq("entity_type", "task").eq("entity_id", id).order("send_at").limit(20),
+    supabase.from("record_revisions").select("created_at,op,actor,before,after").eq("record_id", id).order("created_at", { ascending: false }).limit(30),
+    task.series_id ? supabase.from("tasks").select("occurrence_date,status,retrospective").eq("series_id", task.series_id).order("occurrence_date", { ascending: false }).limit(14) : Promise.resolve({ data: [] }),
+  ]);
+  const HIDE = new Set(["id", "user_id", "created_at", "updated_at", "series_id", "occurrence_date", "confirmed_at"]);
+  return {
+    task,
+    goal: (goal as { title: string } | null)?.title ?? null,
+    series: (series as TaskDetail["series"]) ?? null,
+    reminders: (rem ?? []) as TaskDetail["reminders"],
+    history: (rev ?? []).map((r) => ({
+      at: r.created_at, op: r.op, actor: r.actor === "system" ? "System" : "You",
+      changes: Object.keys({ ...(r.before ?? {}), ...(r.after ?? {}) }).filter((k) => !HIDE.has(k)).map((k) => ({ field: k, from: r.before?.[k] ?? null, to: r.after?.[k] ?? null })),
+    })),
+    seriesHistory: ((siblings ?? []) as { occurrence_date: string; status: string; retrospective: boolean }[]).map((x) => ({ date: x.occurrence_date, status: x.status, retrospective: x.retrospective })),
+  };
+}
+
+export async function startTask(id: string): Promise<{ ok?: true; error?: string }> {
+  const { supabase } = await requireUser();
+  const { error } = await supabase.from("tasks").update({ started_at: new Date().toISOString() }).eq("id", id).is("started_at", null);
+  if (error) return { error: error.message };
+  refresh();
+  return { ok: true };
+}
+
+export async function saveTaskNotes(id: string, notes: string): Promise<{ ok?: true; error?: string }> {
+  const { supabase } = await requireUser();
+  const { error } = await supabase.from("tasks").update({ notes: notes.slice(0, 4000) || null }).eq("id", id);
+  if (error) return { error: error.message };
   refresh();
   return { ok: true };
 }

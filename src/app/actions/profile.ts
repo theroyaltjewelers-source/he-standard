@@ -6,6 +6,8 @@ import { z } from "zod";
 import { requireUser } from "@/lib/session";
 import { isValidTimeZone } from "@/lib/time";
 import { buildCheckinRows } from "@/lib/reminders";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { retryOutboxItem } from "@/lib/sync";
 import { FOCUS_AREAS, CHALLENGES } from "@/lib/types";
 
 const time = z.string().regex(/^\d{2}:\d{2}$/);
@@ -82,4 +84,32 @@ export async function completeOnboarding(_: FormState, form: FormData): Promise<
 
 export async function updateSettings(_: FormState, form: FormData): Promise<FormState> {
   return save(form, false);
+}
+
+/**
+ * Switch the time zone used to decide "today" (e.g. while travelling).
+ * Stored timestamps don't change; recurring activities keep the wall-clock
+ * time of the zone they were planned in. Check-in reminders are rebuilt.
+ */
+export async function switchTimezone(tz: string): Promise<{ ok?: true; error?: string }> {
+  const { supabase, user, profile } = await requireUser();
+  if (!isValidTimeZone(tz)) return { error: "Unknown time zone" };
+  const { error } = await supabase.from("profiles").update({ timezone: tz }).eq("id", user.id);
+  if (error) return { error: error.message };
+  await supabase.from("reminders").delete().eq("entity_type", "checkin").eq("status", "scheduled");
+  const { data: prefs } = await supabase.from("user_preferences").select("midday_checkin_time").maybeSingle();
+  const rows = buildCheckinRows({ id: user.id, timezone: tz, morning_checkin_time: profile.morning_checkin_time, evening_checkin_time: profile.evening_checkin_time, midday_checkin_time: prefs?.midday_checkin_time ?? null });
+  if (rows.length) await supabase.from("reminders").upsert(rows, { onConflict: "user_id,dedupe_key", ignoreDuplicates: true });
+  await createAdminClient().from("audit_logs").insert({ user_id: user.id, actor: "user", action: "profile.timezone_changed", detail: { from: profile.timezone, to: tz } });
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/** Re-queue a Google Calendar change that ran out of retries. */
+export async function retrySync(form: FormData) {
+  const { user } = await requireUser();
+  const id = String(form.get("id") ?? "");
+  if (!z.uuid().safeParse(id).success) return;
+  await retryOutboxItem(createAdminClient(), user.id, id);
+  revalidatePath("/settings");
 }

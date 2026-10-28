@@ -6,7 +6,7 @@ import { z } from "zod";
 import { requireUser } from "@/lib/session";
 import { cancelFutureReminders, syncEventReminders } from "@/lib/reminders";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { deleteRemote, isConnected, pushEvent } from "@/lib/google";
+import { pushOrQueue, deleteOrQueue } from "@/lib/sync";
 import { zonedToUtc } from "@/lib/time";
 import { findConflicts } from "@/lib/conflicts";
 import type { CalendarEvent } from "@/lib/types";
@@ -60,6 +60,7 @@ export async function saveEvent(_: EventState, form: FormData): Promise<EventSta
     recurrence_until: d.recurrence !== "none" && d.recurrence_until ? d.recurrence_until : null,
     plan_confirmed_at: d.confirm_plan ? new Date().toISOString() : null,
     kind: d.kind, accountability: d.all_day ? "off" : d.accountability,
+    ...(d.id ? {} : { timezone: profile.timezone }),
     ...(d.id ? { sync_status: "pending_push" } : {}),
   };
   if (!d.all_day && ends && form.get("ack_conflicts") !== "on") {
@@ -74,10 +75,8 @@ export async function saveEvent(_: EventState, form: FormData): Promise<EventSta
   await syncEventReminders(supabase, user.id, data, profile.timezone);
   const admin = createAdminClient();
   let googleError: string | null = null;
-  if (await isConnected(admin, user.id)) {
-    try { await pushEvent(admin, user.id, data, profile.timezone); }
-    catch (e) { googleError = (e as Error).message; }
-  }
+  const push = await pushOrQueue(admin, user.id, data, profile.timezone);
+  if (!push.ok) googleError = push.status;
   await admin.from("audit_logs").insert({ user_id: user.id, actor: "user", action: d.id ? "event.updated" : "event.created", entity_type: "event", entity_id: data.id, detail: { title: data.title, google_error: googleError } });
   revalidatePath("/plan");
   revalidatePath("/today");
@@ -90,7 +89,7 @@ export async function deleteEvent(form: FormData) {
   const { data: ev } = await supabase.from("events").select("external_source,external_id,user_id").eq("id", id).maybeSingle();
   if (ev?.external_source === "google" && ev.external_id) {
     const admin = createAdminClient();
-    if (await isConnected(admin, ev.user_id)) { try { await deleteRemote(admin, ev.user_id, ev.external_id); } catch { /* local delete continues */ } }
+    await deleteOrQueue(admin, ev.user_id, ev.external_id); // a failure is queued and retried, never dropped
   }
   await cancelFutureReminders(supabase, "event", id);
   await supabase.from("events").delete().eq("id", id);
