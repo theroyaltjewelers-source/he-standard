@@ -41,6 +41,7 @@ export default async function Plan({ searchParams }: PageProps<"/plan">) {
   return (
     <>
       <PageHeader
+        eyebrow="Calendar"
         title={title}
         action={<Link href={`/plan/new?date=${date}`} className="btn btn-primary" aria-label="Add appointment"><IconPlus width={18} height={18} /> <span className="hidden sm:inline">Appointment</span></Link>}
       />

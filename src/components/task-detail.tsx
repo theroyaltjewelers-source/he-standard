@@ -61,7 +61,7 @@ export function TaskDetailPanel({ id, tz, onClose }: { id: string; tz: string; o
   const t = detail?.task;
   const open = t?.status === "pending";
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 backdrop-blur-[2px] sm:items-stretch sm:justify-end" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/55 sm:items-stretch sm:justify-end" onClick={onClose}>
       <div
         ref={panel}
         role="dialog"

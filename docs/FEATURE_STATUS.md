@@ -1,9 +1,26 @@
 # Feature-status register
 
 Statuses: **Not started · Implemented · Tested · Blocked · Requires credentials · Requires device testing · Production verified**.
-"Tested" means covered by the automated suites: 88 unit tests (`npx vitest run`, including controlled-clock rollover/DST tests) and a 150-check end-to-end run (`tests/e2e/e2e.mjs`) against a local Postgres with the same schema and RLS, a real Web Push encryption round-trip, and a headless browser. "Production verified" lists the evidence.
+"Tested" means covered by the automated suites: 98 unit tests (`npx vitest run`, including controlled-clock rollover/DST tests) and a 185-check end-to-end run (`tests/e2e/e2e.mjs`) against a local Postgres with the same schema and RLS, a real Web Push encryption round-trip, and a headless browser. "Production verified" lists the evidence.
 
 Last updated: 2026-10-28 (v4 live). Production: migration `20261030000005_v4.sql` applied (9 new tables, 0 public tables without RLS, 7 revision triggers); v4 deployed from main (5ec15f8). At 03:25 UTC on 28 Oct the live planner and dispatcher answered 200 with the v4 fields (`series_created`, `days_finalized`, `outbox_*`) and no errors; `job_runs` recorded both runs, today's provisional score was stored and the user's reconciliation marker advanced to 2026-10-27. Previously (v3): Production: migration `20261029000004_v3.sql` applied (all 3 new tables present, 0 public tables without RLS, 41 verses loaded); v3 build deployed — at 00:30 UTC on 28 Oct the scheduler's planner and dispatcher both answered 200 with the new v3 fields (`occurrences`, `awaiting_confirmation`, `paused`, `held`) and no errors.
+
+## v5 — food log, performance, clarity
+
+| Feature | Status | Evidence / notes |
+|---|---|---|
+| Food log: describe a meal, date, time eaten; optional meal, portion, notes | Tested | `/food`; E2E §9c (35 checks). No calories, macros, photos or lookups by design. |
+| Previous days, prev/next/date picker, back to today, earliest-first list with count | Tested | E2E §9c. |
+| Edit (incl. moving to another day), Log again (copies description, meal, portion — not notes), Delete with confirmation | Tested | E2E §9c. |
+| Today summary: count, latest entry, Log food, View food log | Tested | E2E §9c. |
+| Duplicate-submit protection | Tested | Idempotency key per opened form + disabled button; triple click saves once. |
+| Failed save keeps input; friendly message; no raw errors | Tested | E2E forces a database rejection. |
+| Unsaved-changes protection (only when something was typed) | Tested | E2E. |
+| Time-zone policy (stored local day + zone; DST; late night; travel) | Tested | 10 unit tests; E2E changes the profile zone and the meal stays on its day. |
+| Authorization (read/update/delete/insert-for-others refused) | Tested | RLS + session-derived owner; E2E with a second account. |
+| Performance fixes | Tested | See docs/PERFORMANCE.md (Today 1116→517 ms, Progress 903→476 ms, lab, simulated 40 ms DB latency). |
+| Motion system (140 ms feedback / 200 ms panels, transform+opacity, reduced-motion) | Implemented | Sheet, menu, details, new-entry highlight. |
+| Accessible sheet/dialog (focus trap, focus return, Escape, labelled fields, errors tied to fields) | Implemented · Tested | Native `<dialog>`; E2E exercises Escape/discard. |
 
 ## v4 — rollover, history, Today, fitness, reliability
 

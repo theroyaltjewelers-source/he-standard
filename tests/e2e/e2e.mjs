@@ -270,7 +270,7 @@ try {
   ok(n2.status === "displayed" && n2.displayed_at, "notification marked displayed after device confirms");
   // Commitment reminder for a resolved commitment should not be sent
   const todayNY = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
-  await q("insert into reminders(user_id,entity_type,dedupe_key,title,url,send_at,respect_quiet_hours) values($1,'checkin',$2,'Morning commitments','/checkin/morning', now() - interval '1 minute', false)", [user.id, `checkin:morning:${todayNY}`]);
+  await q("insert into reminders(user_id,entity_type,dedupe_key,title,url,send_at,respect_quiet_hours) values($1,'checkin',$2,'Morning commitments','/checkin/morning', now() - interval '1 minute', false) on conflict (user_id, dedupe_key) do update set send_at = now() - interval '1 minute', status = 'scheduled', respect_quiet_hours = false", [user.id, `checkin:morning:${todayNY}`]);
   const d2 = await (await fetch(`${APP}/api/cron/dispatch`, { method: "POST", headers: { Authorization: `Bearer ${CRON}` } })).json();
   ok(d2.skipped === 1 && d2.sent === 0, `already-completed morning check-in prompt is not sent ${JSON.stringify(d2)}`);
   // Planner
@@ -692,6 +692,170 @@ try {
     ok(forge.status >= 400, "users cannot forge revision history", String(forge.status));
     const forgeScore = await fetch("http://127.0.0.1:54321/rest/v1/daily_scores", { method: "POST", headers: { apikey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY, Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify({ user_id: user.id, score_date: "2020-01-01", policy_version: "x", integrity: {}, evolution: {} }) });
     ok(forgeScore.status >= 400, "users cannot forge stored scores", String(forgeScore.status));
+  }
+
+  section("9c. Food log");
+  {
+    const nyNow = () => new Date().toLocaleString("en-CA", { timeZone: "America/New_York", hour12: false });
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    const dayShift = (d, n) => { const x = new Date(`${d}T12:00:00Z`); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+    const yesterday = dayShift(today, -1);
+    const food = () => q("select * from food_entries where user_id=$1 order by created_at", [user.id]);
+    const dialog = "dialog[open]";
+    const setVal = (sel, v) => page.$eval(sel, (el, val) => { const set = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), "value").set; set.call(el, val); el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true })); }, v);
+    const openLog = async () => { await page.$$eval("button", (bs) => bs.find((b) => b.textContent.trim() === "Log food").click()); await page.waitForSelector(`${dialog} textarea`); };
+    const save = async () => { await page.$eval(`${dialog} button[type=submit]`, (b) => b.click()); };
+    const waitToast = (re) => page.waitForFunction((src) => [...document.querySelectorAll("[role=status]")].some((t) => new RegExp(src).test(t.textContent)), { timeout: 15000 }, re.source).then(() => true).catch(() => false);
+    const waitClosed = () => page.waitForFunction(() => !document.querySelector("dialog[open]"), { timeout: 15000 }).then(() => true).catch(() => false);
+
+    await go("/today");
+    let tt = await text();
+    ok(/food/i.test(tt) && /No food logged today\./.test(tt) && /View food log/.test(tt), "Today shows the food summary empty state");
+    await openLog();
+    ok(await page.$eval(`${dialog} input[type=date]`, (el) => el.value) === today, "form defaults to today");
+    await page.type(`${dialog} textarea`, "Eggs, toast, and fruit");
+    await save();
+    ok(await waitToast(/Food logged\./), "save confirms “Food logged.” after the server responds");
+    await waitClosed();
+    let rows = await food();
+    ok(rows.length === 1, "entry persisted");
+    const [r1] = await q("select local_date::text d, timezone, meal, portion, notes, client_request_id from food_entries where user_id=$1", [user.id]);
+    ok(r1.d === today && r1.timezone === "America/New_York" && r1.meal === null && r1.portion === null && r1.notes === null && !!r1.client_request_id, "stored with local date, zone and empty optional fields", JSON.stringify(r1));
+    await page.waitForFunction(() => /Eggs, toast, and fruit/.test(document.querySelector("#food-h")?.closest("section")?.textContent ?? ""), { timeout: 10000 }).catch(() => {});
+    tt = await text();
+    ok(/1 today/.test(tt) && /Latest at/.test(tt), "Today summary updates with count and latest entry");
+
+    // Repeated taps create one entry
+    await openLog();
+    await page.type(`${dialog} textarea`, "Double tap test");
+    await page.$eval(`${dialog} button[type=submit]`, (b) => { b.click(); b.click(); b.click(); });
+    await waitClosed();
+    const dbl = await q("select count(*)::int n from food_entries where user_id=$1 and description='Double tap test'", [user.id]);
+    ok(dbl[0].n === 1, "repeated taps create a single entry", String(dbl[0].n));
+
+    // Food page, previous day, late-night entry
+    await go("/food");
+    tt = await text();
+    ok(/2 entries/.test(tt) && /Eggs, toast, and fruit/.test(tt) && /Double tap test/.test(tt), "food page lists today's entries with a count");
+    await openLog();
+    await page.type(`${dialog} textarea`, "Late dinner: lentil soup");
+    await setVal(`${dialog} input[type=date]`, yesterday);
+    await setVal(`${dialog} input[type=time]`, "23:50");
+    await save();
+    ok(await waitToast(/saved to Yesterday/i), "saving to another day says where it was saved");
+    await page.waitForFunction((d) => location.search.includes(d), { timeout: 10000 }, yesterday).catch(() => {});
+    ok(page.url().includes(`date=${yesterday}`), "food page moves to the day the entry was saved on");
+    const [late] = await q("select local_date::text d, eaten_at from food_entries where user_id=$1 and description like 'Late dinner%'", [user.id]);
+    ok(late.d === yesterday && new Date(late.eaten_at).toISOString().slice(0, 10) === today, "late-night meal stays on its local day (UTC date differs)", JSON.stringify(late));
+    tt = await text();
+    ok(/Yesterday/.test(tt) && /Late dinner/.test(tt) && /Back to today/.test(tt), "previous day view shows the entry and a way back to today");
+
+    // Validation: whitespace, future time (client + server share rules)
+    await go("/food");
+    await openLog();
+    await page.type(`${dialog} textarea`, "    ");
+    await save();
+    await page.waitForFunction(() => /Describe what you ate/.test(document.querySelector("dialog[open]")?.textContent ?? ""), { timeout: 5000 }).catch(() => {});
+    ok(/Describe what you ate/.test(await page.$eval(dialog, (d) => d.textContent)), "whitespace-only description rejected");
+    await setVal(`${dialog} textarea`, "Midnight snack from the future");
+    const hour = Number(nyNow().split(", ")[1].slice(0, 2));
+    if (hour < 23) {
+      await setVal(`${dialog} input[type=time]`, "23:59");
+      await save();
+      await page.waitForFunction(() => /hasn't happened yet/.test(document.querySelector("dialog[open]")?.textContent ?? ""), { timeout: 5000 }).catch(() => {});
+      ok(/hasn't happened yet/.test(await page.$eval(dialog, (d) => d.textContent)), "future time rejected clearly");
+    }
+    const fut = await q("select count(*)::int n from food_entries where user_id=$1 and description like 'Midnight snack%'", [user.id]);
+    ok(fut[0].n === 0, "rejected entries are not saved");
+
+    // A failed save keeps what was typed
+    await q("alter table food_entries add constraint e2e_fail check (description <> 'FAIL THIS SAVE')");
+    await setVal(`${dialog} input[type=time]`, "00:00");
+    await setVal(`${dialog} textarea`, "FAIL THIS SAVE");
+    await save();
+    await page.waitForFunction(() => /Couldn’t save your entry|Couldn't save your entry/.test(document.querySelector("dialog[open]")?.textContent ?? ""), { timeout: 10000 }).catch(() => {});
+    const failText = await page.$eval(dialog, (d) => d.textContent);
+    ok(/save your entry\. Your details are still here/.test(failText) && (await page.$eval(`${dialog} textarea`, (t) => t.value)) === "FAIL THIS SAVE", "failed save shows a helpful message and keeps the input");
+    ok(!/violates|constraint|23514/.test(failText), "raw database errors are not shown");
+    await q("alter table food_entries drop constraint e2e_fail");
+    // Cancel with typed text asks before discarding
+    await page.focus(`${dialog} textarea`); await page.keyboard.type(" (typed)");
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => /Discard this entry\?/.test(document.querySelector("dialog[open]")?.textContent ?? ""), { timeout: 5000 }).catch(() => {});
+    ok(/Discard this entry\?/.test(await page.$eval(dialog, (d) => d.textContent).catch(() => "")), "dismissing a typed form asks before discarding");
+    await page.$$eval(`${dialog} button`, (bs) => bs.find((b) => b.textContent === "Discard").click());
+    await waitClosed();
+    await openLog();
+    await page.keyboard.press("Escape");
+    ok(await waitClosed(), "an untouched form closes without a discard prompt");
+
+    // Edit, moving to another date
+    await go("/food");
+    const menuFor = (desc) => page.$$eval("li", (lis, d) => { const li = lis.find((l) => l.textContent.includes(d)); li.querySelector("button[aria-haspopup=menu]").click(); }, desc);
+    const pickItem = (label) => page.$$eval("[role=menuitem]", (bs, l) => bs.find((b) => b.textContent === l).click(), label);
+    await menuFor("Double tap test"); await pickItem("Edit");
+    await page.waitForSelector(`${dialog} textarea`);
+    ok(/Edit food entry/.test(await page.$eval(dialog, (d) => d.textContent)), "edit opens “Edit food entry” with saved values");
+    await setVal(`${dialog} textarea`, "Oatmeal with dates");
+    await setVal(`${dialog} input[type=date]`, dayShift(today, -2));
+    await save();
+    ok(await waitToast(/Changes saved\./), "edit confirms “Changes saved.”");
+    const [ed] = await q("select local_date::text d, description from food_entries where user_id=$1 and description='Oatmeal with dates'", [user.id]);
+    ok(ed?.d === dayShift(today, -2), "edit moved the entry to the new date", JSON.stringify(ed));
+    await go("/food");
+    ok(/1 entry/.test(await text()), "the original day's count updates after the move");
+
+    // Log again
+    await q("update food_entries set notes='old note', meal='breakfast', portion='2 slices' where user_id=$1 and description='Eggs, toast, and fruit'", [user.id]);
+    await go("/food");
+    await menuFor("Eggs, toast, and fruit"); await pickItem("Log again");
+    await page.waitForSelector(`${dialog} textarea`);
+    const again = await page.evaluate(() => ({ d: document.querySelector("dialog[open] textarea").value, notes: [...document.querySelectorAll("dialog[open] textarea")][1]?.value ?? "", meal: document.querySelector("dialog[open] [role=radio][aria-checked=true]")?.textContent, portion: document.querySelector("dialog[open] input[placeholder^='For example, 1 bowl']")?.value }));
+    ok(again.d === "Eggs, toast, and fruit" && again.notes === "" && again.meal === "Breakfast" && again.portion === "2 slices", "log again copies description, meal and portion, not notes", JSON.stringify(again));
+    await save();
+    await waitClosed();
+    const eggs = await q("select notes from food_entries where user_id=$1 and description='Eggs, toast, and fruit' order by created_at", [user.id]);
+    ok(eggs.length === 2 && eggs[0].notes === "old note" && eggs[1].notes === null, "log again created a new entry and left the original unchanged");
+
+    // Delete with confirmation
+    await go(`/food?date=${dayShift(today, -2)}`);
+    await menuFor("Oatmeal with dates"); await pickItem("Delete");
+    await page.waitForFunction(() => /Delete food entry\?/.test(document.querySelector("dialog[open]")?.textContent ?? ""), { timeout: 5000 });
+    ok(/This will remove this entry from your food log\./.test(await page.$eval(dialog, (d) => d.textContent)), "delete asks for confirmation");
+    await page.$$eval(`${dialog} button`, (bs) => bs.find((b) => b.textContent === "Delete entry").click());
+    ok(await waitToast(/Entry deleted\./), "delete confirms “Entry deleted.”");
+    const gone = await q("select count(*)::int n from food_entries where user_id=$1 and description='Oatmeal with dates'", [user.id]);
+    ok(gone[0].n === 0, "entry deleted");
+    await page.waitForFunction(() => /No food logged for this day\./.test(document.body.innerText), { timeout: 10000 }).catch(() => {});
+    tt = await text();
+    ok(/No food logged for this day\./.test(tt) && /Add an entry for/.test(tt), "past day empty state with an add action");
+
+    // Changing time zone does not move past meals; refresh keeps entries
+    await q("update profiles set timezone='Asia/Riyadh' where id=$1", [user.id]);
+    await go(`/food?date=${yesterday}`);
+    ok(/Late dinner: lentil soup/.test(await text()), "a time-zone change leaves historical meals on their day");
+    await q("update profiles set timezone='America/New_York' where id=$1", [user.id]);
+    await page.reload({ waitUntil: "networkidle2" }); await settle();
+    ok(/Late dinner: lentil soup/.test(await text()), "entries survive a refresh");
+
+    // Long text doesn't overflow
+    await q(`insert into food_entries(user_id,description,eaten_at,local_date,timezone) values ($1, repeat('Supercalifragilistic ', 23), now() - interval '1 minute', $2, 'America/New_York')`, [user.id, today]);
+    await go("/food");
+    ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "long descriptions wrap without horizontal overflow");
+    await shot("food");
+
+    // Authorization: another account can't read or change these entries
+    const other = await (await fetch("http://127.0.0.1:54321/auth/v1/signup", { method: "POST", headers: { apikey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ email: `food-other+${Date.now()}@example.com`, password: "another-password-1" }) })).json();
+    const H = { apikey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY, Authorization: `Bearer ${other.access_token}`, "Content-Type": "application/json" };
+    const peekFood = await (await fetch("http://127.0.0.1:54321/rest/v1/food_entries?select=*", { headers: H })).json();
+    ok(Array.isArray(peekFood) && peekFood.length === 0, "another account reads none of this user's food entries");
+    const target = (await food())[0];
+    await fetch(`http://127.0.0.1:54321/rest/v1/food_entries?id=eq.${target.id}`, { method: "PATCH", headers: H, body: JSON.stringify({ description: "hacked" }) });
+    await fetch(`http://127.0.0.1:54321/rest/v1/food_entries?id=eq.${target.id}`, { method: "DELETE", headers: H });
+    const [still] = await q("select description from food_entries where id=$1", [target.id]);
+    ok(still && still.description !== "hacked", "another account cannot edit or delete these entries");
+    const forged = await fetch("http://127.0.0.1:54321/rest/v1/food_entries", { method: "POST", headers: H, body: JSON.stringify({ user_id: user.id, description: "x", eaten_at: new Date().toISOString(), local_date: today, timezone: "UTC" }) });
+    ok(forged.status >= 400, "cannot create entries for another account", String(forged.status));
   }
 
   section("10. Privacy: isolation, export, erase, delete");

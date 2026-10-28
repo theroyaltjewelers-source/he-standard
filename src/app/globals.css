@@ -274,7 +274,8 @@ body {
     transition: background-color 160ms, border-color 160ms, color 160ms, transform 120ms;
   }
   .chip:hover { color: var(--color-ivory); border-color: var(--color-ivory-faint); }
-  .chip[data-on="true"] {
+  @media (pointer: coarse) { .chip { min-height: 44px; } }
+  .chip[data-on="true"], .chip[aria-checked="true"], .chip[aria-pressed="true"] {
     border-color: var(--color-lime);
     color: var(--color-ivory);
     background: var(--color-lime-deep);
@@ -310,10 +311,11 @@ body {
 
 /* Content settles in when a page opens. */
 @keyframes settle {
-  from { opacity: 0; transform: translateY(6px); }
+  from { opacity: 0.35; transform: translateY(4px); }
   to { opacity: 1; transform: none; }
 }
-.settle { animation: settle 280ms var(--ease-out) both; }
+/* Short and never fully transparent, so navigation never feels delayed. */
+.settle { animation: settle 180ms var(--ease-out) both; }
 
 /* Checkmark draw for confirmed completion (only after the server confirms). */
 @keyframes draw { from { stroke-dashoffset: 24; } to { stroke-dashoffset: 0; } }
@@ -375,3 +377,39 @@ body {
   .orb .orb-ring, .orb-dots i { animation: none !important; }
   .orb[data-state="processing"] .orb-ring { border-color: color-mix(in oklab, var(--color-lime) 60%, transparent); }
 }
+
+/* ---------------------------------------------------------------------------
+   Motion system: 140 ms small feedback, 200 ms panels. Transform/opacity only.
+--------------------------------------------------------------------------- */
+:root { --dur-fast: 140ms; --dur-panel: 200ms; }
+@layer components {
+  .sheet {
+    margin: auto auto 0; width: 100%; max-width: 34rem; max-height: min(92dvh, 46rem);
+    padding: 0; border: 1px solid var(--color-line-strong); border-bottom: 0;
+    border-radius: 22px 22px 0 0; background: var(--color-surface); color: var(--color-ivory);
+    overflow: hidden; box-shadow: 0 -20px 60px -20px rgb(0 0 0 / 0.55);
+  }
+  .sheet[open] { animation: sheet-up var(--dur-panel) var(--ease-out) both; }
+  .sheet::backdrop { background: rgb(0 0 0 / 0.5); }
+  .sheet[open]::backdrop { animation: fade-in var(--dur-panel) linear both; }
+  .sheet-sm { max-width: 26rem; }
+  @media (min-width: 640px) {
+    .sheet { margin: auto; border-bottom: 1px solid var(--color-line-strong); border-radius: 22px; }
+    .sheet[open] { animation-name: sheet-pop; }
+  }
+  .icon-btn { display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: 9999px; color: var(--color-ivory-dim); transition: background-color var(--dur-fast), color var(--dur-fast), transform var(--dur-fast); }
+  .icon-btn:hover { background: var(--color-surface-2); color: var(--color-ivory); }
+  .icon-btn:active { transform: scale(0.94); }
+  .field-error { margin-top: 0.375rem; font-size: 0.8125rem; color: var(--color-brass); }
+  .entry-in { animation: entry-in 240ms var(--ease-out) both; }
+  .menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; min-width: 11rem; padding: 4px; border: 1px solid var(--color-line-strong); border-radius: 14px; background: var(--color-surface-2); box-shadow: 0 18px 40px -16px rgb(0 0 0 / 0.6); transform-origin: top right; animation: menu-in var(--dur-fast) var(--ease-out) both; }
+  .menu button { display: flex; width: 100%; min-height: 44px; align-items: center; gap: 0.5rem; border-radius: 10px; padding: 0 0.75rem; text-align: left; font-size: 0.9375rem; }
+  .menu button:hover, .menu button:focus-visible { background: var(--color-surface-3); outline: none; }
+}
+@keyframes sheet-up { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes sheet-pop { from { transform: translateY(8px) scale(0.98); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes entry-in { from { opacity: 0; transform: translateY(-4px); background: color-mix(in oklab, var(--color-lime) 10%, transparent); } to { opacity: 1; transform: none; } }
+@keyframes menu-in { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
+@keyframes details-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.details-in { animation: details-in 180ms var(--ease-out) both; }

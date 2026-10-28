@@ -42,6 +42,7 @@ Run in order in Supabase → SQL Editor (each file once):
 3. `supabase/migrations/20261028000003_v2.sql`
 4. `supabase/migrations/20261029000004_v3.sql` (additive: activity lifecycle, workouts, notification controls)
 5. `supabase/migrations/20261030000005_v4.sql` (additive: recurring task series, stored daily scores, revision history, sets/body metrics, job runs, Google sync outbox, Coach request idempotency)
+6. `supabase/migrations/20261031000006_food.sql` (additive: food log)
 5. `supabase/setup/schedule_jobs.sql` (scheduler)
 
 ## iPhone
