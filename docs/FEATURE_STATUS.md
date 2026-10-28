@@ -3,7 +3,7 @@
 Statuses: **Not started · Implemented · Tested · Blocked · Requires credentials · Requires device testing · Production verified**.
 "Tested" means covered by the automated suites: 88 unit tests (`npx vitest run`, including controlled-clock rollover/DST tests) and a 150-check end-to-end run (`tests/e2e/e2e.mjs`) against a local Postgres with the same schema and RLS, a real Web Push encryption round-trip, and a headless browser. "Production verified" lists the evidence.
 
-Last updated: 2026-10-27 (v4 — see the v4 section below). Previously (v3): Production: migration `20261029000004_v3.sql` applied (all 3 new tables present, 0 public tables without RLS, 41 verses loaded); v3 build deployed — at 00:30 UTC on 28 Oct the scheduler's planner and dispatcher both answered 200 with the new v3 fields (`occurrences`, `awaiting_confirmation`, `paused`, `held`) and no errors.
+Last updated: 2026-10-28 (v4 live). Production: migration `20261030000005_v4.sql` applied (9 new tables, 0 public tables without RLS, 7 revision triggers); v4 deployed from main (5ec15f8). At 03:25 UTC on 28 Oct the live planner and dispatcher answered 200 with the v4 fields (`series_created`, `days_finalized`, `outbox_*`) and no errors; `job_runs` recorded both runs, today's provisional score was stored and the user's reconciliation marker advanced to 2026-10-27. Previously (v3): Production: migration `20261029000004_v3.sql` applied (all 3 new tables present, 0 public tables without RLS, 41 verses loaded); v3 build deployed — at 00:30 UTC on 28 Oct the scheduler's planner and dispatcher both answered 200 with the new v3 fields (`occurrences`, `awaiting_confirmation`, `paused`, `held`) and no errors.
 
 ## v4 — rollover, history, Today, fitness, reliability
 
