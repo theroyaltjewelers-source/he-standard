@@ -3,7 +3,7 @@
 Statuses: **Not started · Implemented · Tested · Blocked · Requires credentials · Requires device testing · Production verified**.
 "Tested" means covered by the automated suites: 67 unit tests (`npx vitest run`) and a 121-check end-to-end run (`tests/e2e/e2e.mjs`) against a local Postgres with the same schema and RLS, a real Web Push encryption round-trip, and a headless browser. "Production verified" lists the evidence.
 
-Last updated: 2026-10-27 (v3).
+Last updated: 2026-10-27 (v3). Production: migration `20261029000004_v3.sql` applied (all 3 new tables present, 0 public tables without RLS, 41 verses loaded); v3 build deployed — at 00:30 UTC on 28 Oct the scheduler's planner and dispatcher both answered 200 with the new v3 fields (`occurrences`, `awaiting_confirmation`, `paused`, `held`) and no errors.
 
 ## Core
 
