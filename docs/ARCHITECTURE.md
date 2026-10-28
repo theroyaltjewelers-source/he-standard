@@ -233,3 +233,13 @@ Morning priorities: outcome, done-by time, effort, likely obstacle, first action
 
 ### Retention
 `apply_retention()` (run by the planner): notification attempts 90 days, finished reminders 90 days, tool executions and audit logs 365 days, unconfirmed proposals expire after 24 h.
+
+## 11. Version 3 (Definitive Execution Directive)
+
+- **Design system:** canvas black `#08090B`, graphite surfaces, warm white type, electric-lime accent (olive-lime in light theme), emerald = kept, copper = shortfall, validated 7-slot categorical palette for domains. Geist sans; Newsreader only for long-form reading (journal, scripture). Bento cards, button states via `data-state`, skeletons (`loading.tsx`), page settle transition, reduced motion everywhere.
+- **Scoring:** `src/lib/scoring` — pure, versioned (2026.10-1), seven weighted domains; see `docs/SCORING.md`. Loader `scoring/load.ts` reads records under RLS.
+- **Dashboard:** `/progress` — Personal Evolution bento (sections 7.1–7.12) + weekly report; goals list at `/progress/goals`.
+- **Command Center:** `/today` — `lib/timeline.ts` merges events (with prep/travel buffers), tasks, commitments, prayers, focus and check-ins; `components/command-center.tsx` (list + drag-to-reschedule day view); `app/actions/timeline.ts` (conflict-checked actions).
+- **Lifecycle:** `events.kind` + `events.accountability`; `lib/lifecycle.ts` builds start / did-you-start / did-you-finish reminders; `activity_occurrences` records outcomes (original start never rewritten); `workout_logs`; planner `sweepOccurrences` marks unanswered occurrences `awaiting_confirmation`.
+- **Notification controls:** `reminders.priority`, `user_preferences.daily_notification_budget`, `paused_until`; `notification_action_log` idempotency keys; Reminders page shows delivery checks and full history.
+- Feature status with evidence: `docs/FEATURE_STATUS.md`.

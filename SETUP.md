@@ -40,7 +40,8 @@ Run in order in Supabase → SQL Editor (each file once):
 1. `supabase/migrations/20261027000001_init.sql`
 2. `supabase/migrations/20261027000002_app_config.sql`
 3. `supabase/migrations/20261028000003_v2.sql`
-4. `supabase/setup/schedule_jobs.sql` (scheduler)
+4. `supabase/migrations/20261029000004_v3.sql` (additive: activity lifecycle, workouts, notification controls)
+5. `supabase/setup/schedule_jobs.sql` (scheduler)
 
 ## iPhone
 
@@ -54,7 +55,9 @@ npx next typegen && npx tsc --noEmit && npx eslint src && npx vitest run
 npx next build
 ```
 
-End-to-end: `tests/e2e/README.md` describes the local stack (Postgres + `tests/e2e/server.mjs` stand-in for the Supabase APIs, a local HTTPS push receiver) and `tests/e2e/e2e.mjs` (95 checks: sign-up, onboarding, morning/midday/evening interviews with follow-ups and skips, tasks, goals, habits, appointments, journal and guided reflection, real encrypted push delivery, focus sessions, impulse interruption, money, weekly report, memory approval, preferences, integrity score, RLS isolation, export, erase and account deletion).
+Feature status with evidence: `docs/FEATURE_STATUS.md`. Scoring rules: `docs/SCORING.md`.
+
+End-to-end: `tests/e2e/README.md` describes the local stack (Postgres + `tests/e2e/server.mjs` stand-in for the Supabase APIs, a local HTTPS push receiver) and `tests/e2e/e2e.mjs` (121 checks: sign-up, onboarding, morning/midday/evening interviews with follow-ups and skips, tasks, goals, habits, appointments, journal and guided reflection, real encrypted push delivery, the Command Center timeline (start/complete/reschedule with conflict checks, drag-to-move), workout lifecycle, idempotent notification actions, daily budget and pause, the Personal Evolution dashboard, focus sessions, impulse interruption, money, weekly report, memory approval, preferences, integrity score, RLS isolation, export, erase and account deletion).
 
 ## Troubleshooting
 
