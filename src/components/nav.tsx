@@ -11,10 +11,9 @@ function isActive(path: string, href: string) {
   return path === href || path.startsWith(href + "/");
 }
 
+/** Desktop side rail. */
 export function Nav() {
   const path = usePathname();
-  const moreActive = SECONDARY.some((s) => isActive(path, s.href)) || path === "/more" || path.startsWith("/goals");
-  const mobile = [...PRIMARY.slice(0, 2), PRIMARY[2], PRIMARY[3], { href: "/more", label: "More", Icon: IconMore }];
   return (
     <>
       <nav aria-label="Main" className="fixed inset-y-0 left-0 hidden w-60 flex-col overflow-y-auto border-r border-line px-5 py-8 lg:flex">
@@ -45,7 +44,21 @@ export function Nav() {
         </form>
       </nav>
 
-      <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-ground pb-[env(safe-area-inset-bottom)] lg:hidden">
+    </>
+  );
+}
+
+/**
+ * Phone tab bar. It is the last element of the page and sticks to the bottom
+ * (position: sticky, not fixed): iOS Safari mis-places fixed bottom bars while
+ * its toolbar collapses during scrolling, leaving the bar floating mid-screen.
+ */
+export function MobileNav() {
+  const path = usePathname();
+  const moreActive = SECONDARY.some((s) => isActive(path, s.href)) || path === "/more" || path.startsWith("/goals");
+  const mobile = [...PRIMARY.slice(0, 2), PRIMARY[2], PRIMARY[3], { href: "/more", label: "More", Icon: IconMore }];
+  return (
+    <nav aria-label="Main" className="sticky bottom-0 z-40 border-t border-line bg-ground pb-[env(safe-area-inset-bottom)] lg:hidden">
         <ul className="mx-auto grid max-w-xl grid-cols-5 items-end">
           {mobile.map(({ href, label, Icon }) => {
             const active = href === "/more" ? moreActive || path.startsWith("/journal") : isActive(path, href);
@@ -67,7 +80,6 @@ export function Nav() {
             );
           })}
         </ul>
-      </nav>
-    </>
+    </nav>
   );
 }
