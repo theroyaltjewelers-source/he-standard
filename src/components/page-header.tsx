@@ -1,18 +1,19 @@
 import Link from "next/link";
 import { IconArrowLeft } from "./icons";
 
-export function PageHeader({ title, subtitle, back, action }: {
-  title: string; subtitle?: React.ReactNode; back?: string; action?: React.ReactNode;
+export function PageHeader({ title, subtitle, back, action, eyebrow }: {
+  title: string; subtitle?: React.ReactNode; back?: string; action?: React.ReactNode; eyebrow?: string;
 }) {
   return (
     <header className="mb-8">
       {back && (
-        <Link href={back} className="-ml-1 mb-4 inline-flex items-center gap-1 text-sm text-ivory-dim hover:text-ivory">
+        <Link href={back} className="-ml-1 mb-3 inline-flex min-h-11 items-center gap-1 text-sm text-ivory-dim hover:text-ivory">
           <IconArrowLeft width={18} height={18} /> Back
         </Link>
       )}
       <div className="flex items-end justify-between gap-4">
-        <div>
+        <div className="min-w-0">
+          {eyebrow && <p className="eyebrow mb-1">{eyebrow}</p>}
           <h1 className="h-page">{title}</h1>
           {subtitle && <p className="mt-1.5 text-ivory-dim">{subtitle}</p>}
         </div>

@@ -10,7 +10,7 @@ const TABLES = [
   "user_preferences", "prayer_settings", "prayer_confirmations", "spiritual_logs", "verse_reflections",
   "focus_sessions", "impulse_logs", "financial_entries", "ai_conversations", "ai_messages", "ai_tool_executions",
   "audit_logs", "calendar_sync_state", "activity_occurrences", "workout_logs", "notification_action_log",
-  "task_series", "workout_exercises", "workout_sets", "body_metrics", "daily_scores", "record_revisions",
+  "task_series", "workout_exercises", "workout_sets", "body_metrics", "food_entries", "daily_scores", "record_revisions",
 ] as const;
 
 /** Full export of everything stored about the signed-in user, as JSON. */

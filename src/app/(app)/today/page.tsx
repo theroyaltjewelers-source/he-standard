@@ -20,6 +20,11 @@ import { reconcileUser } from "@/lib/rollover";
 import { POLICY_V1 } from "@/lib/scoring";
 import { LiveClock, CountdownTo } from "@/components/live-clock";
 import { todayIn } from "@/lib/time";
+import { after } from "next/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { verseTotal } from "@/lib/quran-count";
+import { FoodSummary } from "@/components/food/food-log";
+import type { FoodEntryRow } from "@/app/actions/food";
 
 export const metadata = { title: "Today" };
 
@@ -37,14 +42,19 @@ export default async function Today({ searchParams }: PageProps<"/today">) {
   const wk = weekStart(date);
   const isPast = date < today;
 
-  // Opening the app after a gap: create any missing occurrences and stored scores first.
-  const { data: rec } = await supabase.from("user_preferences").select("last_reconciled_on").maybeSingle();
-  if (!rec?.last_reconciled_on || rec.last_reconciled_on < today) {
-    try { await reconcileUser(supabase, user.id, tz, today, todayIn(tz, new Date(profile.created_at ?? now))); } catch { /* the planner retries every 15 minutes */ }
-  }
-
-  const [{ data: prefs }, { data: plan }, { data: overdue }, { data: habits }, { data: habitLogs }, { data: sessions }, series, { data: prayerSettings }, { data: prayerConf }, { count: verseCount }, { count: pendingMemories }, events, { data: goals }] = await Promise.all([
-    supabase.from("user_preferences").select("midday_checkin_time").maybeSingle(),
+  // Everything this page needs is requested at once (one round of queries).
+  const prefsP = supabase.from("user_preferences").select("midday_checkin_time,last_reconciled_on").maybeSingle();
+  const timelineP = prefsP.then(({ data }) => buildTimeline(supabase, date, tz, profile, data ? data.midday_checkin_time : "13:00"));
+  const verseP = verseTotal(supabase).then(async (n) => {
+    if (!n) return null;
+    const i = pickIndex(date, profile.id, n);
+    const { data } = await supabase.from("quran_verses").select("*").order("surah").order("ayah").range(i, i);
+    return (data?.[0] ?? null) as QuranVerse | null;
+  });
+  const [{ data: prefs }, timeline, verse, { data: plan }, { data: overdue }, { data: habits }, { data: habitLogs }, { data: sessions }, series, { data: prayerSettings }, { data: prayerConf }, { count: pendingMemories }, events, { data: goals }, vapidKey, { data: foodRows }] = await Promise.all([
+    prefsP,
+    timelineP,
+    verseP,
     supabase.from("daily_plans").select("*").eq("plan_date", date).maybeSingle<DailyPlan>(),
     supabase.from("tasks").select("*").lt("scheduled_for", today).eq("status", "pending").order("scheduled_for"),
     supabase.from("habits").select("*").eq("active", true).order("created_at"),
@@ -53,22 +63,25 @@ export default async function Today({ searchParams }: PageProps<"/today">) {
     integritySeries(supabase, shiftDate(date, -6), date, today),
     supabase.from("prayer_settings").select("*").maybeSingle<PrayerSettingsRow>(),
     supabase.from("prayer_confirmations").select("prayer").eq("prayer_date", date),
-    supabase.from("quran_verses").select("id", { count: "exact", head: true }),
     supabase.from("ai_memory").select("id", { count: "exact", head: true }).eq("status", "proposed"),
     eventsBetween(supabase, date, date, tz),
     supabase.from("goals").select("id,title").eq("status", "active"),
+    isToday ? getVapidPublicKey() : Promise.resolve(null),
+    supabase.from("food_entries").select("id,description,eaten_at,local_date,timezone,meal,portion,notes,created_at,updated_at").eq("local_date", date).order("eaten_at", { ascending: false }),
   ]);
   const middayTime: string | null = prefs ? prefs.midday_checkin_time : "13:00";
-  const timeline = await buildTimeline(supabase, date, tz, profile, middayTime);
+  // A new day with the app opened before the scheduler ran: reconcile after the
+  // response is sent (the scheduler does the same every 15 minutes).
+  if (isToday && (!prefs?.last_reconciled_on || prefs.last_reconciled_on < today)) {
+    after(async () => {
+      try { await reconcileUser(createAdminClient(), user.id, tz, today, todayIn(tz, new Date(profile.created_at ?? now))); } catch { /* retried by the scheduler */ }
+    });
+  }
   const pcfg = prayerSettings ? prayerConfig(prayerSettings, tz) : null;
   const prayerToday = pcfg ? prayerTimesFor(date, pcfg) : null;
   const upcomingPrayer = pcfg && isToday ? nextPrayer(today, pcfg, now) : null;
   const confirmedPrayers = new Set((prayerConf ?? []).map((c) => c.prayer));
   const awaitingConfirm = prayerToday ? PRAYERS.filter((p) => prayerToday[p] <= now && !confirmedPrayers.has(p)) : [];
-  const { data: verseRows } = verseCount
-    ? await supabase.from("quran_verses").select("*").order("surah").order("ayah").range(pickIndex(date, profile.id, verseCount), pickIndex(date, profile.id, verseCount))
-    : { data: [] };
-  const verse = (verseRows?.[0] ?? null) as QuranVerse | null;
 
   // Top three priorities: morning commitments first, then tasks marked as priorities.
   const priorities = [
@@ -149,7 +162,7 @@ export default async function Today({ searchParams }: PageProps<"/today">) {
         </div>
       </header>
 
-      {isToday && <div className="max-w-2xl"><PushToggle vapidKey={await getVapidPublicKey()} compact /></div>}
+      {isToday && <div className="max-w-2xl"><PushToggle vapidKey={vapidKey} compact /></div>}
       {isPast && (
         <p className="rounded-[14px] border border-line bg-surface px-4 py-2.5 text-sm text-ivory-dim">You&apos;re viewing a past day exactly as it was recorded. Anything you record now is saved as <b>reported later</b>.</p>
       )}
@@ -182,27 +195,6 @@ export default async function Today({ searchParams }: PageProps<"/today">) {
           {plan?.avoid_behavior && <p className="mt-2 text-sm text-ivory-dim"><span className="text-ivory-faint">Avoiding: </span>{plan.avoid_behavior}</p>}
         </section>
 
-        {/* Today's three priorities */}
-        {(priorities.length > 0 || isToday) && (
-          <section aria-labelledby="prio-h" className="card lg:col-span-7">
-            <div className="flex items-baseline justify-between gap-3">
-              <h2 id="prio-h" className="eyebrow">{isPast ? "Priorities that day" : "Today's three priorities"}</h2>
-              {isToday && <Link href={`/coach?q=${encodeURIComponent("Plan my day today around my calendar, prayers, goals and deadlines. Don't move confirmed appointments.")}`} className="text-xs text-accent hover:underline">Plan my day with the Coach</Link>}
-            </div>
-            {priorities.length ? (
-              <ol className="mt-2 space-y-2">
-                {priorities.map((p, k) => (
-                  <li key={p.id} className="flex items-center gap-3">
-                    <span className={`grid size-6 shrink-0 place-items-center rounded-full text-xs tabular ${p.state === "completed" || p.state === "late" ? "bg-emerald text-ground" : p.state === "skipped" ? "bg-brass text-ground" : "border border-line-strong text-ivory-dim"}`}>{k + 1}</span>
-                    <span className={`min-w-0 flex-1 truncate ${p.state === "completed" || p.state === "late" ? "text-ivory-dim line-through decoration-ivory-faint" : ""}`}>{p.title}</span>
-                    {p.start && <span className="shrink-0 text-xs tabular text-ivory-faint">{formatInZone(p.start, tz, "h:mm a")}</span>}
-                  </li>
-                ))}
-              </ol>
-            ) : <p className="mt-2 text-sm text-ivory-dim">None set yet. <Link href="/checkin/morning" className="text-accent hover:underline">Choose up to three</Link>.</p>}
-          </section>
-        )}
-
         {/* Spiritual companion — kept separate from productivity scoring */}
         <section aria-labelledby="pr-h" className="card card-violet lg:col-span-5">
           <div className="flex items-baseline justify-between gap-3">
@@ -234,12 +226,26 @@ export default async function Today({ searchParams }: PageProps<"/today">) {
           )}
         </section>
 
-        {/* Accountability */}
-        <section aria-label="Check-ins" className={`grid gap-3 lg:col-span-7 ${middayTime ? "grid-cols-3" : "grid-cols-2"}`}>
-          <CheckinLink href="/checkin/morning" label="Morning" done={done("morning")} time={formatClock(profile.morning_checkin_time)} />
-          {middayTime && <CheckinLink href="/checkin/midday" label="Midday" done={done("midday")} time={formatClock(middayTime.slice(0, 5))} />}
-          <CheckinLink href="/checkin/evening" label="Evening" done={done("evening")} time={formatClock(profile.evening_checkin_time)} />
-        </section>
+        {/* Today's three priorities */}
+        {(priorities.length > 0 || isToday) && (
+          <section aria-labelledby="prio-h" className="card lg:col-span-7">
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 id="prio-h" className="eyebrow">{isPast ? "Priorities that day" : "Today's three priorities"}</h2>
+              {isToday && <Link href={`/coach?q=${encodeURIComponent("Plan my day today around my calendar, prayers, goals and deadlines. Don't move confirmed appointments.")}`} className="text-xs text-accent hover:underline">Plan my day with the Coach</Link>}
+            </div>
+            {priorities.length ? (
+              <ol className="mt-2 space-y-2">
+                {priorities.map((p, k) => (
+                  <li key={p.id} className="flex items-center gap-3">
+                    <span className={`grid size-6 shrink-0 place-items-center rounded-full text-xs tabular ${p.state === "completed" || p.state === "late" ? "bg-emerald text-ground" : p.state === "skipped" ? "bg-brass text-ground" : "border border-line-strong text-ivory-dim"}`}>{k + 1}</span>
+                    <span className={`min-w-0 flex-1 truncate ${p.state === "completed" || p.state === "late" ? "text-ivory-dim line-through decoration-ivory-faint" : ""}`}>{p.title}</span>
+                    {p.start && <span className="shrink-0 text-xs tabular text-ivory-faint">{formatInZone(p.start, tz, "h:mm a")}</span>}
+                  </li>
+                ))}
+              </ol>
+            ) : <p className="mt-2 text-sm text-ivory-dim">None set yet. <Link href="/checkin/morning" className="text-accent hover:underline">Choose up to three</Link>.</p>}
+          </section>
+        )}
 
         {/* Coach */}
         <Link href="/coach" className="card card-hover flex items-center justify-between gap-4 lg:col-span-5">
@@ -251,6 +257,15 @@ export default async function Today({ searchParams }: PageProps<"/today">) {
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
           </span>
         </Link>
+
+        {/* Accountability */}
+        <section aria-label="Check-ins" className={`grid gap-3 lg:col-span-7 ${middayTime ? "grid-cols-3" : "grid-cols-2"}`}>
+          <CheckinLink href="/checkin/morning" label="Morning" done={done("morning")} time={formatClock(profile.morning_checkin_time)} />
+          {middayTime && <CheckinLink href="/checkin/midday" label="Midday" done={done("midday")} time={formatClock(middayTime.slice(0, 5))} />}
+          <CheckinLink href="/checkin/evening" label="Evening" done={done("evening")} time={formatClock(profile.evening_checkin_time)} />
+        </section>
+
+        {isToday && <div className="lg:col-span-5"><FoodSummary today={today} tz={tz} count={foodRows?.length ?? 0} latest={(foodRows?.[0] ?? null) as FoodEntryRow | null} /></div>}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-12">
@@ -313,6 +328,10 @@ export default async function Today({ searchParams }: PageProps<"/today">) {
               <div>
                 <p className="text-sm text-ivory-dim">Workouts</p>
                 {history.workouts.length ? <ul className="text-sm">{history.workouts.map((w) => <li key={w.id}>{w.workout_type} · {w.duration_minutes ?? "?"} min{w.intensity ? ` · intensity ${w.intensity}/5` : ""}</li>)}</ul> : <p className="text-sm text-ivory-faint">None logged.</p>}
+              </div>
+              <div>
+                <p className="text-sm text-ivory-dim">Food</p>
+                <p className="text-sm">{foodRows?.length ? <Link href={`/food?date=${date}`} className="hover:underline">{foodRows.length} {foodRows.length === 1 ? "entry" : "entries"} — view</Link> : <span className="text-ivory-faint">None logged.</span>}</p>
               </div>
               <div>
                 <p className="text-sm text-ivory-dim">Journal</p>

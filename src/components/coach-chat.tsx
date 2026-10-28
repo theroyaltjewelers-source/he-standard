@@ -212,7 +212,7 @@ export function CoachChat({ initialConversationId, initialMessages, initialActio
       </div>
 
       <form onSubmit={(e) => { e.preventDefault(); void send(input, "typed"); }}
-        className="sticky bottom-[calc(76px+env(safe-area-inset-bottom))] mt-6 flex items-end gap-2 bg-ground/95 py-3 backdrop-blur lg:bottom-0">
+        className="sticky bottom-[calc(76px+env(safe-area-inset-bottom))] mt-6 flex items-end gap-2 bg-ground py-3 lg:bottom-0">
         <textarea value={input} onChange={(e) => setInput(e.target.value)} rows={1}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(input, "typed"); } }}
           className="field max-h-40 min-h-[48px] resize-none font-sans text-base" placeholder={listening ? "Listening…" : "Type, or tap the microphone"} aria-label="Message the Coach" disabled={busy} />

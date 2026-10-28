@@ -36,7 +36,22 @@ export default async function Progress({ searchParams }: PageProps<"/progress">)
   const prevStart = shiftDate(periodStart, -span);
   const loadFrom = [shiftDate(periodStart, -30), prevStart, shiftDate(today, -34)].sort()[0];
 
-  const input = await loadScoringInput(supabase, { from: loadFrom, today, tz, since });
+  // All independent reads in one round.
+  const [input, { data: distractionRows }, [occ, { data: upTasks }, { data: upCommit }, { data: goals }, { data: milestones }, { data: progress }, { data: ps }, { data: conf }], { data: reports }] = await Promise.all([
+    loadScoringInput(supabase, { from: loadFrom, today, tz, since }),
+    supabase.from("focus_sessions").select("distractions").gte("started_at", new Date(Date.parse(periodStart) - 864e5).toISOString()),
+    Promise.all([
+      eventsBetween(supabase, today, shiftDate(today, 7), tz),
+      supabase.from("tasks").select("id,title,due_at").eq("status", "pending").gte("due_at", now.toISOString()).order("due_at").limit(6),
+      supabase.from("commitments").select("id,title,promised_by,made_to").eq("status", "open").gte("promised_by", now.toISOString()).order("promised_by").limit(6),
+      supabase.from("goals").select("*").eq("status", "active").order("target_date", { nullsFirst: false }),
+      supabase.from("goal_milestones").select("goal_id,title,due_date,completed_at"),
+      supabase.from("goal_progress").select("goal_id,progress_pct,created_at").order("created_at", { ascending: false }),
+      supabase.from("prayer_settings").select("*").maybeSingle<PrayerSettingsRow>(),
+      supabase.from("prayer_confirmations").select("prayer").eq("prayer_date", today),
+    ]),
+    supabase.from("weekly_reports").select("*").order("week_start", { ascending: false }).limit(12),
+  ]);
   const report = computeScores({ ...input, from: periodStart, to: today });
   const previous = computeScores({ ...input, from: prevStart, to: shiftDate(periodStart, -1) });
   const tr = trend(input, period, since);
@@ -63,22 +78,11 @@ export default async function Progress({ searchParams }: PageProps<"/progress">)
     const end = shiftDate(today, -7 * (7 - k)), start = shiftDate(end, -6);
     return input.focus.filter((f) => f.date >= start && f.date <= end && f.status === "completed").reduce((n, f) => n + f.minutes, 0);
   });
-  const { data: distractionRows } = await supabase.from("focus_sessions").select("distractions").gte("started_at", new Date(Date.parse(periodStart) - 864e5).toISOString());
   const hourCounts = new Map<number, number>();
   for (const r of distractionRows ?? []) for (const d of (r.distractions ?? []) as { at: string }[]) { const h = Number(formatInZone(d.at, tz, "H")); hourCounts.set(h, (hourCounts.get(h) ?? 0) + 1); }
   const topHours = [...hourCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2);
 
   // Upcoming, goals, fitness, prayer
-  const [occ, { data: upTasks }, { data: upCommit }, { data: goals }, { data: milestones }, { data: progress }, { data: ps }, { data: conf }] = await Promise.all([
-    eventsBetween(supabase, today, shiftDate(today, 7), tz),
-    supabase.from("tasks").select("id,title,due_at").eq("status", "pending").gte("due_at", now.toISOString()).order("due_at").limit(6),
-    supabase.from("commitments").select("id,title,promised_by,made_to").eq("status", "open").gte("promised_by", now.toISOString()).order("promised_by").limit(6),
-    supabase.from("goals").select("*").eq("status", "active").order("target_date", { nullsFirst: false }),
-    supabase.from("goal_milestones").select("goal_id,title,due_date,completed_at"),
-    supabase.from("goal_progress").select("goal_id,progress_pct,created_at").order("created_at", { ascending: false }),
-    supabase.from("prayer_settings").select("*").maybeSingle<PrayerSettingsRow>(),
-    supabase.from("prayer_confirmations").select("prayer").eq("prayer_date", today),
-  ]);
   const upcoming = [
     ...occ.filter((o) => o.start > now && !o.event.all_day).map((o) => ({ id: `e-${o.event.id}-${o.start.getTime()}`, entity: o.event.id, title: o.event.title, at: o.start, kind: o.event.kind ?? "appointment", prep: o.event.prep_minutes + o.event.travel_minutes > 0 ? (o.event.plan_confirmed_at ? "Plan confirmed" : "Prep set") : "No prep needed", href: `/today?date=${o.date}#occ-${o.event.id}` })),
     ...(upTasks ?? []).map((t) => ({ id: `t-${t.id}`, entity: t.id, title: t.title, at: new Date(t.due_at!), kind: "task", prep: "Task deadline", href: "/word" })),
@@ -120,7 +124,6 @@ export default async function Progress({ searchParams }: PageProps<"/progress">)
     ? `Insufficient data for an overall score in this period. ${report.excluded.length} of 7 domains lack evidence.`
     : `Overall ${report.overall} for the selected period, based on ${Math.round(report.coverageWeight * 100)}% of the scoring weight.${delta !== null ? ` ${delta >= 0 ? "Up" : "Down"} ${Math.abs(delta)} points from the previous period.` : ""}`;
 
-  const { data: reports } = await supabase.from("weekly_reports").select("*").order("week_start", { ascending: false }).limit(12);
 
   return (
     <div className="bleed space-y-6">

@@ -62,7 +62,7 @@ const CONTENT_TABLES = [
   "goal_milestones", "prayer_confirmations", "prayer_schedules", "spiritual_logs", "verse_reflections",
   "focus_sessions", "impulse_logs", "financial_entries", "ai_tool_executions", "ai_messages", "ai_conversations",
   "calendar_sync_state", "audit_logs", "workout_sets", "workout_exercises", "workout_logs", "activity_occurrences", "notification_action_log",
-  "body_metrics", "task_series", "daily_scores", "sync_outbox",
+  "body_metrics", "food_entries", "task_series", "daily_scores", "sync_outbox",
   "record_revisions", // last: erasing the records above writes revisions that must go too
 ] as const;
 
