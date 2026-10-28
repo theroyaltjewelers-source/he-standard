@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { IconMore } from "./icons";
 import { PRIMARY, SECONDARY } from "./nav-links";
+import { SignOutButton } from "./service-worker";
 
 function isActive(path: string, href: string) {
   if (href === "/journal") return path.startsWith("/journal") || path.startsWith("/reflection");
@@ -39,9 +40,9 @@ export function Nav() {
             </li>
           ))}
         </ul>
-        <form action="/auth/signout" method="post" className="mt-auto px-3 pt-6">
+        <SignOutButton className="mt-auto px-3 pt-6">
           <button className="text-sm text-ivory-faint hover:text-ivory-dim">Sign out</button>
-        </form>
+        </SignOutButton>
       </nav>
 
     </>

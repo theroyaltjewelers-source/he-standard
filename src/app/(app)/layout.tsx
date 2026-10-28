@@ -9,7 +9,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <>
       <Nav />
-      <ServiceWorker />
+      <ServiceWorker userId={profile.id} />
       <Toaster />
       <div className="flex min-h-dvh flex-col lg:pl-60">
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 sm:px-5 pt-[calc(env(safe-area-inset-top)+2rem)] pb-10 lg:px-10 lg:pt-12 lg:pb-16">

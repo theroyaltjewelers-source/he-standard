@@ -2,6 +2,7 @@ import Link from "next/link";
 import { MORE_LINKS } from "@/components/nav-links";
 import { IconJournal } from "@/components/icons";
 import { PageHeader } from "@/components/page-header";
+import { SignOutButton } from "@/components/service-worker";
 
 export const metadata = { title: "More" };
 
@@ -15,7 +16,7 @@ export default function More() {
           <li key={href}><Link href={href} className="flex items-center gap-4 py-4 text-lg"><Icon className="text-ivory-dim" />{label}</Link></li>
         ))}
       </ul>
-      <form action="/auth/signout" method="post" className="mt-10"><button className="text-ivory-faint hover:text-ivory-dim">Sign out</button></form>
+      <SignOutButton className="mt-10"><button className="min-h-11 text-ivory-faint hover:text-ivory-dim">Sign out</button></SignOutButton>
     </>
   );
 }
