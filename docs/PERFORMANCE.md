@@ -53,6 +53,24 @@ were not available for this release.
 
 Single-run numbers vary by roughly ±80 ms; the Today and Progress changes are well outside that.
 
+## Production (live) measurements
+
+Signed-in Chrome on the owner's computer, fetching each page's full HTML 3 times (median), same
+account and data, minutes apart. Both columns run the v5 code; the only change is the function region.
+
+| Route | iad1 (before) | pdx1 (after) |
+|---|---|---|
+| /today | 889 | 524 |
+| /food | 407 | 302 |
+| /word | 754 | 353 |
+| /progress | 1098 | 442 |
+| /fitness | 450 | 308 |
+| /settings | 1029 | 443 |
+
+The first load after a deploy (cold start) took 2.7 s to first byte; this is a one-off per new
+server instance. Live numbers for the v4 code before this release weren't captured (no browser
+access at the time), so the code-level gains are shown by the lab table above.
+
 ## Known remaining costs
 
 - Each link prefetch passes through the proxy, which verifies the session with Supabase Auth

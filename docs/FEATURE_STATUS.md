@@ -7,6 +7,8 @@ Last updated: 2026-10-28 (v4 live). Production: migration `20261030000005_v4.sql
 
 ## v5 — food log, performance, clarity
 
+Production (2026-10-28): migration `20261031000006_food.sql` applied (RLS on, 4 policies, 0 public tables without RLS); v5 deployed (fe3eca9) and functions moved to `pdx1` next to the database (1bcf506). Live: Food page and form render, untouched form closes on Escape, no console errors; scheduler answering 200; the midnight rollover finalized 2026-10-27 and started 2026-10-28. Live page times roughly halved (docs/PERFORMANCE.md). Saving food was not exercised on the live site to avoid writing to the owner's real record; it is covered by the E2E suite.
+
 | Feature | Status | Evidence / notes |
 |---|---|---|
 | Food log: describe a meal, date, time eaten; optional meal, portion, notes | Tested | `/food`; E2E §9c (35 checks). No calories, macros, photos or lookups by design. |
