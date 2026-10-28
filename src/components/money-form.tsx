@@ -1,5 +1,7 @@
 "use client";
 
+import { SubmitButton } from "@/components/submit-button";
+
 import { useActionState, useRef, useState } from "react";
 import { addEntry, type MoneyState } from "@/app/actions/money";
 
@@ -11,7 +13,7 @@ const KINDS = [
 export function MoneyForm({ today }: { today: string }) {
   const [kind, setKind] = useState<(typeof KINDS)[number]["k"]>("expense");
   const ref = useRef<HTMLFormElement>(null);
-  const [state, action, pending] = useActionState<MoneyState, FormData>(async (p, f) => {
+  const [state, action] = useActionState<MoneyState, FormData>(async (p, f) => {
     const r = await addEntry(p, f);
     if (r?.ok) ref.current?.reset();
     return r;
@@ -42,7 +44,7 @@ export function MoneyForm({ today }: { today: string }) {
         </>
       )}
       {state?.error && <p role="alert" className="text-sm text-brass">{state.error}</p>}
-      <button className="btn btn-primary w-full" disabled={pending}>{pending ? "Saving…" : "Record"}</button>
+      <SubmitButton result={state} className="btn btn-primary w-full" successText="Recorded">Record</SubmitButton>
     </form>
   );
 }

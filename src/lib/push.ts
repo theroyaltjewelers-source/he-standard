@@ -5,8 +5,10 @@ import { env } from "./env";
 import { getVapidKeys } from "./app-config";
 import type { Reminder, UserPreferences } from "./types";
 import { inQuietHours, quietHoursEnd } from "./scheduling";
-import { localDateString } from "./time";
-import { categorySetting, nextFollowUp, type Category, type Intensity } from "./reminder-policy";
+import { dayBoundsUtc, localDateString } from "./time";
+import { budgetDecision, categorySetting, nextFollowUp, pauseDecision, type Category, type Intensity } from "./reminder-policy";
+import { lifecycleRelevant, parseLifecycleKey } from "./lifecycle";
+import type { OccurrenceStatus } from "./types";
 
 let configured = false;
 async function configure() {
@@ -68,7 +70,19 @@ async function stillRelevant(admin: SupabaseClient, r: Reminder, tz: string): Pr
   switch (r.entity_type) {
     case "task": { if (!id) return true; const { data } = await admin.from("tasks").select("status").eq("id", id).maybeSingle(); return data?.status === "pending"; }
     case "commitment": { if (!id) return true; const { data } = await admin.from("commitments").select("status").eq("id", id).maybeSingle(); return data?.status === "open"; }
-    case "event": { if (!id) return true; const { data } = await admin.from("events").select("id").eq("id", id).maybeSingle(); return !!data; }
+    case "event": {
+      if (!id) return true;
+      const { data } = await admin.from("events").select("id").eq("id", id).maybeSingle();
+      if (!data) return false;
+      const life = parseLifecycleKey(r.dedupe_key);
+      const occIso = life?.occurrence ?? (r.dedupe_key ?? "").split(":")[2];
+      if (!occIso) return true;
+      const { data: occ } = await admin.from("activity_occurrences").select("status").eq("event_id", id).eq("occurrence_start", occIso).maybeSingle();
+      const status = occ?.status as OccurrenceStatus | undefined;
+      if (life) return lifecycleRelevant(life.stage, status);
+      // Preparation/departure reminders stop once the occurrence was moved, skipped or excused.
+      return !status || !["rescheduled", "skipped", "excused"].includes(status);
+    }
     case "focus": { if (!id) return true; const { data } = await admin.from("focus_sessions").select("status").eq("id", id).maybeSingle(); return data?.status === "active"; }
     case "finance": { if (!id) return true; const { data } = await admin.from("financial_entries").select("paid").eq("id", id).maybeSingle(); return data?.paid === false; }
     case "prayer": {
@@ -125,10 +139,10 @@ async function scheduleFollowUp(admin: SupabaseClient, r: Reminder, prefs: UserP
   }
 }
 
-export interface DispatchSummary { claimed: number; sent: number; partial: number; failed: number; retried: number; deferred: number; skipped: number; noDevice: number; released: number; disabled: number }
+export interface DispatchSummary { claimed: number; sent: number; partial: number; failed: number; retried: number; deferred: number; skipped: number; noDevice: number; released: number; disabled: number; paused: number; held: number }
 
 export async function dispatchDueReminders(admin: SupabaseClient, limit = 100): Promise<DispatchSummary> {
-  const summary: DispatchSummary = { claimed: 0, sent: 0, partial: 0, failed: 0, retried: 0, deferred: 0, skipped: 0, noDevice: 0, released: 0, disabled: 0 };
+  const summary: DispatchSummary = { claimed: 0, sent: 0, partial: 0, failed: 0, retried: 0, deferred: 0, skipped: 0, noDevice: 0, released: 0, disabled: 0, paused: 0, held: 0 };
   const { data: released } = await admin.rpc("release_stuck_reminders");
   summary.released = Number(released ?? 0);
 
@@ -146,6 +160,16 @@ export async function dispatchDueReminders(admin: SupabaseClient, limit = 100): 
   const byId = new Map((profiles ?? []).map((p: ProfileLite) => [p.id, p]));
   const prefsById = new Map(((prefsRows ?? []) as UserPreferences[]).map((p) => [p.user_id, p]));
   const now = new Date();
+  // Normal/low-priority notifications already sent today, per user (for the daily budget).
+  const sentToday = new Map<string, number>();
+  for (const uid of userIds) {
+    const prefs = prefsById.get(uid);
+    if (!prefs?.daily_notification_budget) continue;
+    const tz = byId.get(uid)?.timezone ?? "UTC";
+    const since = dayBoundsUtc(localDateString(now, tz), tz).start.toISOString();
+    const { count } = await admin.from("reminders").select("id", { count: "exact", head: true }).eq("user_id", uid).in("status", ["sent", "partial"]).gte("priority", 2).gte("processed_at", since);
+    sentToday.set(uid, count ?? 0);
+  }
 
   for (const r of reminders) {
     const p = byId.get(r.user_id);
@@ -155,11 +179,30 @@ export async function dispatchDueReminders(admin: SupabaseClient, limit = 100): 
     const cat = categorySetting(prefs?.categories, (r.category ?? "commitments") as Category);
 
     if (!cat.enabled) { await done({ status: "cancelled", last_error: `${r.category} notifications are turned off` }); summary.disabled++; continue; }
+    if (pauseDecision(r.category, prefs?.paused_until, prefs?.pause_keeps_prayer ?? true, now) === "hold") {
+      await done({ status: "cancelled", last_error: `Notifications paused until ${new Date(prefs!.paused_until!).toLocaleString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit", weekday: "short" })}` });
+      summary.paused++;
+      continue;
+    }
     if (!(await stillRelevant(admin, r, tz))) { await done({ status: "cancelled", last_error: "no longer relevant" }); summary.skipped++; continue; }
     if (now.getTime() - new Date(r.send_at).getTime() > 6 * 3600_000) { await done({ status: "cancelled", last_error: "too late to be useful" }); summary.skipped++; continue; }
     if (r.respect_quiet_hours && !cat.quiet_override && p?.quiet_hours_start && p.quiet_hours_end && inQuietHours(now, p.quiet_hours_start, p.quiet_hours_end, tz)) {
       await done({ status: "scheduled", send_at: quietHoursEnd(now, p.quiet_hours_end, tz).toISOString(), attempts: Math.max(0, r.attempts - 1) });
       summary.deferred++;
+      continue;
+    }
+
+    const priority = r.priority ?? 2;
+    if (budgetDecision(priority, sentToday.get(r.user_id) ?? 0, prefs?.daily_notification_budget) === "hold") {
+      await done({ status: "cancelled", last_error: `Daily notification budget (${prefs!.daily_notification_budget}) reached — held back` });
+      summary.held++;
+      // One grouped notice per day so nothing disappears silently.
+      await admin.from("reminders").upsert({
+        user_id: r.user_id, entity_type: "custom", entity_id: null, category: "system", priority: 1,
+        dedupe_key: `budget:${localDateString(now, tz)}`, title: "Today's notification limit reached",
+        body: "Lower-priority reminders are held back until tomorrow. They're listed under Reminders → History.",
+        url: "/reminders", send_at: new Date(now.getTime() + 30_000).toISOString(), respect_quiet_hours: true, actions: [],
+      }, { onConflict: "user_id,dedupe_key", ignoreDuplicates: true });
       continue;
     }
 
@@ -181,6 +224,7 @@ export async function dispatchDueReminders(admin: SupabaseClient, limit = 100): 
     } else { await done({ status: "failed", last_error: res.errors.join(" | ").slice(0, 500) }); summary.failed++; }
 
     if (res.accepted > 0) {
+      if (priority >= 2) sentToday.set(r.user_id, (sentToday.get(r.user_id) ?? 0) + 1);
       try { await scheduleFollowUp(admin, r, prefs); } catch { /* follow-up scheduling must not block dispatch */ }
     }
   }

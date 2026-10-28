@@ -29,6 +29,7 @@ export default async function EditEvent({ params }: PageProps<"/plan/[id]">) {
         all_day: ev.all_day, location: ev.location ?? "", notes: ev.notes ?? "", importance: ev.importance,
         prep_minutes: ev.prep_minutes, travel_minutes: ev.travel_minutes, offsets: ev.reminder_offsets,
         recurrence: ev.recurrence, recurrence_until: ev.recurrence_until ?? "", confirmed: !!ev.plan_confirmed_at,
+        kind: ev.kind ?? "appointment", accountability: ev.accountability ?? "light",
       }} />
 
       <section className="mt-12">

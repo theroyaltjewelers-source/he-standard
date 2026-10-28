@@ -72,7 +72,7 @@ export function MorningForm({ initial }: { initial: Record<string, string> }) {
       </fieldset>
 
       {state?.error && <p role="alert" className="text-brass">{state.error}</p>}
-      <button className="btn btn-primary w-full" disabled={pending}>{pending ? "Recording…" : "Record commitments"}</button>
+      <button className="btn btn-primary w-full" disabled={pending} data-state={pending ? "loading" : undefined}>{pending ? "Recording…" : "Record commitments"}</button>
     </form>
   );
 }

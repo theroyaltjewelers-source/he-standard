@@ -11,7 +11,7 @@ export function OnboardingForm({ profile }: { profile: Profile }) {
     <form action={action} className="space-y-10">
       <ProfileFields profile={profile} />
       {state?.error && <p role="alert" className="text-brass">{state.error}</p>}
-      <button className="btn btn-primary w-full" disabled={pending}>{pending ? "Saving…" : "Begin"}</button>
+      <button className="btn btn-primary w-full" disabled={pending} data-state={pending ? "loading" : undefined}>{pending ? "Saving…" : "Begin"}</button>
     </form>
   );
 }

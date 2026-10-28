@@ -1,8 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { cookies } from "next/headers";
+import { GeistSans } from "geist/font/sans";
+import { GeistMono } from "geist/font/mono";
 import "@fontsource-variable/newsreader/opsz.css";
-import "@fontsource-variable/newsreader/opsz-italic.css";
-import "@fontsource-variable/hanken-grotesk/index.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -16,8 +16,8 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#161719" },
-    { media: "(prefers-color-scheme: light)", color: "#efede7" },
+    { media: "(prefers-color-scheme: dark)", color: "#08090b" },
+    { media: "(prefers-color-scheme: light)", color: "#f3f2ee" },
   ],
   width: "device-width",
   initialScale: 1,
@@ -30,7 +30,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const haptics = jar.get("haptics")?.value === "off" ? "off" : "on";
   const t = theme === "light" || theme === "system" ? theme : "dark";
   return (
-    <html lang="en" data-theme={t} data-haptics={haptics}>
+    <html lang="en" data-theme={t} data-haptics={haptics} className={`${GeistSans.variable} ${GeistMono.variable}`}>
       <body className="min-h-dvh">{children}</body>
     </html>
   );

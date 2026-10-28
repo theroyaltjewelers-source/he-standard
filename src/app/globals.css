@@ -1,62 +1,88 @@
 @import "tailwindcss";
 
 /*
- * THE STANDARD — design tokens
- * Charcoal ground, warm ivory type, one restrained emerald.
- * Shortfalls use a muted brass rather than red: the app records misses, it does not scold.
+ * THE STANDARD — design tokens (v3)
+ *
+ * Canvas black, layered graphite surfaces, warm white type, one controlled
+ * electric-lime accent for primary actions and featured data. Emerald marks
+ * kept/completed, copper marks shortfalls (never alarm red), violet and rose
+ * are reserved for data visualisation.
+ *
+ * Token names are kept stable (ivory = primary text, brass = shortfall, …) so
+ * every screen picks up the system from one place.
  */
 @theme {
-  --color-ground: #161719;      /* page */
-  --color-surface: #1e1f22;     /* raised panels */
-  --color-surface-2: #26272b;   /* inputs, pressed */
-  --color-line: #303136;        /* hairlines */
-  --color-ivory: #ece5d5;       /* primary text */
-  --color-ivory-dim: #a9a394;   /* secondary text */
-  --color-ivory-faint: #6f6b62; /* tertiary text */
-  --color-emerald: #4a9a7c;     /* accent: kept, done, primary action */
-  --color-emerald-deep: #1f4a3b;
-  --color-brass: #b8945a;       /* shortfall, attention */
-  --color-brass-deep: #3d3222;
+  --color-ground: #08090b;      /* canvas */
+  --color-surface: #121317;     /* elevated card */
+  --color-surface-2: #1b1c22;   /* inputs, pressed, secondary card */
+  --color-surface-3: #24252d;   /* hover */
+  --color-line: #25262e;        /* hairlines */
+  --color-line-strong: #34353f;
+  --color-ivory: #f8f8f5;       /* primary text */
+  --color-ivory-dim: #a4a5af;   /* secondary text */
+  --color-ivory-faint: #747681; /* muted text */
+  --color-lime: #d9ff37;        /* primary accent */
+  --color-lime-deep: #2b3310;
+  --color-emerald: #37a980;     /* kept, done */
+  --color-emerald-deep: #10291f;
+  --color-brass: #d58d63;       /* shortfall, attention (copper) */
+  --color-brass-deep: #33221a;
+  --color-violet: #8270f6;
+  --color-rose: #e86a9e;
+  --color-sky: #5fb4e8;
 
-  --font-serif: "Newsreader Variable", "Iowan Old Style", Georgia, serif;
-  --font-sans: "Hanken Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-reading: "Newsreader Variable", "Iowan Old Style", Georgia, serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 
   --text-display: 4.5rem;
   --text-display--line-height: 1;
-  --radius-panel: 14px;
-  --radius-control: 10px;
+  --radius-card: 24px;
+  --radius-panel: 18px;
+  --radius-control: 12px;
+
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-spring: cubic-bezier(0.3, 1.3, 0.5, 1);
 }
 
-/* Light theme: warm paper, ink, deeper emerald. Applied by preference or system setting. */
+/* Light theme: warm paper, ink, olive-lime accent that stays legible on white. */
 :root[data-theme="light"] {
-  --color-ground: #efede7;
-  --color-surface: #f8f7f3;
-  --color-surface-2: #e6e3db;
-  --color-line: #d5d1c6;
-  --color-ivory: #1c1d1f;
-  --color-ivory-dim: #514f4a;
-  --color-ivory-faint: #86827a;
-  --color-emerald: #1d6e52;
-  --color-emerald-deep: #d3e6dc;
-  --color-brass: #85601c;
-  --color-brass-deep: #eadcbc;
-  --on-emerald: #f8f7f3;
+  --color-ground: #f3f2ee;
+  --color-surface: #ffffff;
+  --color-surface-2: #ecebe6;
+  --color-surface-3: #e3e2dc;
+  --color-line: #e0ded7;
+  --color-line-strong: #cfccc3;
+  --color-ivory: #111214;
+  --color-ivory-dim: #55565e;
+  --color-ivory-faint: #888993;
+  --color-lime: #b8e01a;
+  --color-lime-deep: #eef7c9;
+  --color-emerald: #1f7d5c;
+  --color-emerald-deep: #d9efe5;
+  --color-brass: #a65d33;
+  --color-brass-deep: #f5e3d8;
+  --accent-text: #4a5c00;
   color-scheme: light;
 }
 @media (prefers-color-scheme: light) {
   :root[data-theme="system"] {
-    --color-ground: #efede7;
-    --color-surface: #f8f7f3;
-    --color-surface-2: #e6e3db;
-    --color-line: #d5d1c6;
-    --color-ivory: #1c1d1f;
-    --color-ivory-dim: #514f4a;
-    --color-ivory-faint: #86827a;
-    --color-emerald: #1d6e52;
-    --color-emerald-deep: #d3e6dc;
-    --color-brass: #85601c;
-    --color-brass-deep: #eadcbc;
-    --on-emerald: #f8f7f3;
+    --color-ground: #f3f2ee;
+    --color-surface: #ffffff;
+    --color-surface-2: #ecebe6;
+    --color-surface-3: #e3e2dc;
+    --color-line: #e0ded7;
+    --color-line-strong: #cfccc3;
+    --color-ivory: #111214;
+    --color-ivory-dim: #55565e;
+    --color-ivory-faint: #888993;
+    --color-lime: #b8e01a;
+    --color-lime-deep: #eef7c9;
+    --color-emerald: #1f7d5c;
+    --color-emerald-deep: #d9efe5;
+    --color-brass: #a65d33;
+    --color-brass-deep: #f5e3d8;
+    --accent-text: #4a5c00;
     color-scheme: light;
   }
 }
@@ -64,7 +90,8 @@
 html {
   background: var(--color-ground);
   color-scheme: dark;
-  --on-emerald: #0f1d17;
+  --on-lime: #0b0c08;
+  --accent-text: #d9ff37;
 }
 
 body {
@@ -72,45 +99,108 @@ body {
   color: var(--color-ivory);
   font-family: var(--font-sans);
   font-size: 16px;
-  line-height: 1.55;
+  line-height: 1.5;
+  letter-spacing: -0.006em;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  font-feature-settings: "ss01", "cv11";
 }
 
 ::selection {
-  background: var(--color-emerald-deep);
-  color: var(--color-ivory);
+  background: var(--color-lime);
+  color: var(--on-lime);
 }
 
 :focus-visible {
-  outline: 2px solid var(--color-emerald);
+  outline: 2px solid var(--color-lime);
   outline-offset: 2px;
-  border-radius: 6px;
+  border-radius: 8px;
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+@utility text-accent {
+  color: var(--accent-text);
 }
 
 @layer components {
+  /* Display sans for headings; .reading is the long-form serif for journal and scripture. */
   .serif {
-    font-family: var(--font-serif);
+    font-family: var(--font-sans);
+    letter-spacing: -0.018em;
+  }
+  .reading {
+    font-family: var(--font-reading);
     font-optical-sizing: auto;
+    letter-spacing: 0;
+  }
+  .eyebrow {
+    font-size: 0.72rem;
+    line-height: 1rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-ivory-faint);
+    font-weight: 500;
   }
   .h-page {
-    font-family: var(--font-serif);
     font-size: 2rem;
-    line-height: 1.15;
-    font-weight: 400;
-    letter-spacing: -0.01em;
+    line-height: 1.1;
+    font-weight: 600;
+    letter-spacing: -0.03em;
   }
   .h-section {
-    font-family: var(--font-serif);
-    font-size: 1.25rem;
-    line-height: 1.3;
-    font-weight: 450;
+    font-size: 1.125rem;
+    line-height: 1.35;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+  }
+  .metric {
+    font-weight: 600;
+    letter-spacing: -0.045em;
+    line-height: 0.95;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Bento card: graphite surface, hairline border, soft lift on hover. */
+  .card {
+    position: relative;
+    min-width: 0;
+    background: linear-gradient(180deg, color-mix(in oklab, var(--color-surface) 100%, white 2%), var(--color-surface));
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-card);
+    padding: 1.25rem;
+    transition: border-color 200ms var(--ease-out), transform 200ms var(--ease-out), box-shadow 200ms var(--ease-out);
+  }
+  .card-hover:hover {
+    border-color: var(--color-line-strong);
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-lime) 8%, transparent), 0 18px 40px -24px rgb(0 0 0 / 0.7);
+  }
+  a.card:active { transform: scale(0.99); }
+  /* Featured card: a restrained luminous gradient, used once or twice per screen. */
+  .card-feature {
+    background:
+      radial-gradient(120% 90% at 100% 0%, color-mix(in oklab, var(--color-lime) 16%, transparent) 0%, transparent 55%),
+      radial-gradient(90% 80% at 0% 100%, color-mix(in oklab, var(--color-violet) 18%, transparent) 0%, transparent 60%),
+      var(--color-surface);
+  }
+  .card-violet {
+    background:
+      radial-gradient(110% 100% at 0% 0%, color-mix(in oklab, var(--color-violet) 28%, transparent), transparent 60%),
+      var(--color-surface);
+  }
+  .card-emerald {
+    background:
+      radial-gradient(110% 100% at 100% 0%, color-mix(in oklab, var(--color-emerald) 24%, transparent), transparent 60%),
+      var(--color-surface);
   }
   .panel {
     background: var(--color-surface);
     border: 1px solid var(--color-line);
     border-radius: var(--radius-panel);
   }
+
   .field {
     width: 100%;
     background: var(--color-surface-2);
@@ -119,18 +209,14 @@ body {
     padding: 0.7rem 0.85rem;
     color: var(--color-ivory);
     font-size: 1rem; /* ≥16px prevents iOS zoom */
+    transition: border-color 160ms, background-color 160ms;
   }
-  .field::placeholder {
-    color: var(--color-ivory-faint);
-  }
-  .field:focus {
-    outline: none;
-    border-color: var(--color-emerald);
-  }
+  .field::placeholder { color: var(--color-ivory-faint); }
+  .field:hover { border-color: var(--color-line-strong); }
+  .field:focus { outline: none; border-color: var(--color-lime); background: var(--color-surface); }
+  .field[aria-invalid="true"] { border-color: var(--color-brass); }
   textarea.field {
-    font-family: var(--font-serif);
-    font-size: 1.075rem;
-    line-height: 1.65;
+    line-height: 1.6;
     min-height: 7rem;
     resize: vertical;
   }
@@ -140,78 +226,125 @@ body {
     color: var(--color-ivory-dim);
     margin-bottom: 0.4rem;
   }
+
+  /* Buttons: default, hover, pressed, focus-visible, loading, success, error, disabled. */
   .btn {
+    position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
     min-height: 44px;
-    padding: 0 1.1rem;
-    border-radius: var(--radius-control);
-    font-weight: 550;
-    font-size: 0.95rem;
-    transition: background-color 120ms, border-color 120ms, opacity 120ms;
+    padding: 0 1.15rem;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 0.925rem;
+    letter-spacing: -0.01em;
+    transition: background-color 180ms var(--ease-out), border-color 180ms var(--ease-out), box-shadow 180ms var(--ease-out), transform 120ms var(--ease-out), opacity 150ms;
+    -webkit-tap-highlight-color: transparent;
   }
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn:active:not(:disabled), .chip:active { transform: scale(0.975); }
+  .btn-primary { background: var(--color-lime); color: var(--on-lime); }
+  .btn-primary:hover:not(:disabled) { box-shadow: 0 0 0 4px color-mix(in oklab, var(--color-lime) 18%, transparent); }
+  .btn-quiet { background: transparent; border: 1px solid var(--color-line-strong); color: var(--color-ivory); }
+  .btn-quiet:hover:not(:disabled) { background: var(--color-surface-2); }
+  .btn-danger { background: transparent; border: 1px solid #6b3a2e; color: #e3a48f; }
+  .btn-danger:hover:not(:disabled) { background: #2a1712; }
+  .btn[data-state="loading"] { cursor: progress; }
+  .btn[data-state="loading"]::after {
+    content: "";
+    width: 14px; height: 14px; border-radius: 999px;
+    border: 2px solid currentColor; border-right-color: transparent;
+    animation: spin 700ms linear infinite;
   }
-  .btn-primary {
-    background: var(--color-emerald);
-    color: var(--on-emerald);
-  }
-  .btn-primary:hover:not(:disabled) {
-    filter: brightness(1.08);
-  }
-  .btn:active:not(:disabled),
-  .chip:active {
-    transform: scale(0.98);
-  }
-  .btn-quiet {
-    background: transparent;
-    border: 1px solid var(--color-line);
-    color: var(--color-ivory);
-  }
-  .btn-quiet:hover:not(:disabled) {
-    border-color: var(--color-ivory-faint);
-  }
-  .btn-danger {
-    background: transparent;
-    border: 1px solid #6b3a2e;
-    color: #d9a08f;
-  }
+  .btn[data-state="success"] { background: var(--color-emerald); color: #04140d; border-color: transparent; }
+  .btn[data-state="error"] { border-color: var(--color-brass); color: var(--color-brass); background: transparent; }
+
   .chip {
     display: inline-flex;
     align-items: center;
+    gap: 0.35rem;
     min-height: 36px;
-    padding: 0 0.8rem;
+    padding: 0 0.85rem;
     border-radius: 999px;
-    border: 1px solid var(--color-line);
+    border: 1px solid var(--color-line-strong);
     color: var(--color-ivory-dim);
     font-size: 0.875rem;
+    transition: background-color 160ms, border-color 160ms, color 160ms, transform 120ms;
   }
+  .chip:hover { color: var(--color-ivory); border-color: var(--color-ivory-faint); }
   .chip[data-on="true"] {
-    border-color: var(--color-emerald);
+    border-color: var(--color-lime);
     color: var(--color-ivory);
-    background: var(--color-emerald-deep);
+    background: var(--color-lime-deep);
   }
-  .rule {
-    border-top: 1px solid var(--color-line);
+  .seg {
+    display: inline-flex;
+    padding: 3px;
+    gap: 2px;
+    border-radius: 999px;
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-line);
+  }
+  .seg > * {
+    padding: 0.35rem 0.8rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    color: var(--color-ivory-dim);
+    transition: background-color 160ms, color 160ms;
+  }
+  .seg > [aria-current="true"], .seg > [data-on="true"] { background: var(--color-ivory); color: var(--color-ground); font-weight: 600; }
+  .rule { border-top: 1px solid var(--color-line); }
+
+  .skeleton {
+    background: linear-gradient(90deg, var(--color-surface-2) 0%, var(--color-surface-3) 50%, var(--color-surface-2) 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+    border-radius: 10px;
   }
 }
 
-/* One deliberate motion: content settles in when a page opens. */
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+/* Content settles in when a page opens. */
 @keyframes settle {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: none; }
 }
-.settle { animation: settle 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.settle { animation: settle 280ms var(--ease-out) both; }
+
+/* Checkmark draw for confirmed completion (only after the server confirms). */
+@keyframes draw { from { stroke-dashoffset: 24; } to { stroke-dashoffset: 0; } }
+.check-draw path { stroke-dasharray: 24; animation: draw 320ms var(--ease-out) both; }
+@keyframes pop { 0% { transform: scale(0.85); } 60% { transform: scale(1.06); } 100% { transform: scale(1); } }
+.pop { animation: pop 260ms var(--ease-spring) both; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+.toast-in { animation: toast-in 220ms var(--ease-out) both; }
 
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
+}
+
+/* Reading-width pages stay at a comfortable measure; dashboards opt into the full grid with .bleed. */
+.page-flow > :not(.bleed) { max-width: 42rem; margin-inline: auto; }
+
+/* Data-visualisation categorical slots (validated: adjacent CVD ΔE ≥ 8.4, normal-vision ≥ 19.3 on #121317).
+   Order is fixed and follows the entity: reliability, discipline, fitness, planning, self-awareness, communication, learning. */
+:root {
+  --d1: #3987e5; --d2: #d95926; --d3: #199e70; --d4: #c98500; --d5: #d55181; --d6: #008300; --d7: #9085e9;
+}
+:root[data-theme="light"] {
+  --d1: #2a78d6; --d2: #eb6834; --d3: #1baf7a; --d4: #eda100; --d5: #e87ba4; --d6: #008300; --d7: #6250d6;
+}
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] { --d1: #2a78d6; --d2: #eb6834; --d3: #1baf7a; --d4: #eda100; --d5: #e87ba4; --d6: #008300; --d7: #6250d6; }
 }

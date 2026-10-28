@@ -3,7 +3,7 @@
  * that the notification was displayed (and later, clicked). The server only
  * records "displayed" when this report arrives.
  */
-const CACHE = "standard-shell-v2";
+const CACHE = "standard-shell-v3";
 const OFFLINE_URL = "/offline";
 
 self.addEventListener("install", (event) => {
@@ -64,18 +64,20 @@ self.addEventListener("push", (event) => {
   event.waitUntil(Promise.all([self.registration.showNotification(title, options), ack(data.id, "displayed")]));
 });
 
+// Each tap carries an idempotency key, so a retry never records the action twice.
 async function act(reminderId, notificationId, action) {
-  try {
-    const r = await fetch("/api/notifications/action", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reminder_id: reminderId, notification_id: notificationId, action }),
-    });
-    return r.ok;
-  } catch (_) {
-    return false;
+  const body = JSON.stringify({ reminder_id: reminderId, notification_id: notificationId, action, idempotency_key: `${notificationId || reminderId}:${action}` });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const r = await fetch("/api/notifications/action", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body });
+      if (!r.ok) return { ok: false };
+      const j = await r.json().catch(() => ({}));
+      return { ok: true, open: j.open, result: j.result };
+    } catch (_) {
+      await new Promise((res) => setTimeout(res, 1500));
+    }
   }
+  return { ok: false };
 }
 
 self.addEventListener("notificationclick", (event) => {
@@ -85,10 +87,16 @@ self.addEventListener("notificationclick", (event) => {
     event.waitUntil(
       (async () => {
         await ack(id, "clicked");
-        const ok = await act(reminder_id, id, event.action);
-        if (!ok) {
+        const res = await act(reminder_id, id, event.action);
+        if (!res.ok) {
           // Couldn't reach the server (offline or signed out): open the app instead of silently failing.
           return self.clients.openWindow(url || "/today");
+        }
+        if (res.open) return self.clients.openWindow(res.open);
+        // Confirm what was recorded (replaces the original notification by tag).
+        if (res.result) {
+          await self.registration.showNotification("Recorded", { body: res.result, tag: `ack-${reminder_id}`, icon: "/icons/icon-192.png", silent: true });
+          setTimeout(() => self.registration.getNotifications({ tag: `ack-${reminder_id}` }).then((ns) => ns.forEach((n) => n.close())), 4000);
         }
       })(),
     );

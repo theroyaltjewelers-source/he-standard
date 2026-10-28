@@ -24,7 +24,7 @@ export default async function Entry({ params }: PageProps<"/journal/[id]">) {
         subtitle={e.title ? formatLocalDate(e.entry_date, "EEEE, MMMM d, yyyy") : undefined}
         action={<Link href={`/journal/${id}/edit`} className="btn btn-quiet">Edit</Link>} />
       {modeLabel && <p className="mb-4 text-xs uppercase tracking-[0.14em] text-ivory-faint">{modeLabel}</p>}
-      <div className="serif text-[1.15rem] leading-[1.75] whitespace-pre-wrap">{e.body}</div>
+      <div className="reading text-[1.15rem] leading-[1.75] whitespace-pre-wrap">{e.body}</div>
       <dl className="mt-10 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
         <div><dt className="text-ivory-faint">Mood</dt><dd>{e.mood ? `${e.mood} / 5` : "—"}</dd></div>
         <div><dt className="text-ivory-faint">Energy</dt><dd>{e.energy ? `${e.energy} / 5` : "—"}</dd></div>
@@ -40,7 +40,7 @@ export default async function Entry({ params }: PageProps<"/journal/[id]">) {
         {(refl ?? []).map((r) => (
           <div key={r.id} className="rounded-[14px] bg-surface p-4">
             <p className="text-xs uppercase tracking-[0.14em] text-ivory-faint">Written by Claude · {formatInZone(r.created_at, profile.timezone, "MMM d, h:mm a")}</p>
-            <p className="serif mt-2 text-[1.05rem] leading-relaxed">{r.reflection}</p>
+            <p className="reading mt-2 text-[1.05rem] leading-relaxed">{r.reflection}</p>
             {Array.isArray(r.questions) && r.questions.length > 0 && (
               <ul className="mt-3 space-y-1.5 border-l border-emerald/60 pl-4">{(r.questions as string[]).map((q) => <li key={q} className="text-ivory-dim">{q}</li>)}</ul>
             )}

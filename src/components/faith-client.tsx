@@ -58,7 +58,7 @@ export function LocationControl({ hasLocation, autoLocation, label }: { hasLocat
       </div>
       <form onSubmit={(e) => { e.preventDefault(); start(async () => setResults(await searchCity(q))); }} className="flex gap-2">
         <input value={q} onChange={(e) => setQ(e.target.value)} className="field" placeholder="Or search a city" aria-label="City" />
-        <button className="btn btn-quiet shrink-0" disabled={pending || q.trim().length < 2}>Search</button>
+        <button className="btn btn-quiet shrink-0" disabled={pending || q.trim().length < 2} data-state={pending ? "loading" : undefined}>Search</button>
       </form>
       {results.length > 0 && (
         <ul className="divide-y divide-line rounded-[12px] border border-line">
@@ -131,7 +131,7 @@ export function PrayerSettingsForm({ s }: { s: S }) {
       </fieldset>
       {state?.error && <p role="alert" className="text-sm text-brass">{state.error}</p>}
       {state?.ok && <p role="status" className="text-sm text-emerald">Saved. Prayer times and reminders were recalculated.</p>}
-      <button className="btn btn-primary" disabled={pending}>{pending ? "Saving…" : "Save prayer settings"}</button>
+      <button className="btn btn-primary" disabled={pending} data-state={pending ? "loading" : undefined}>{pending ? "Saving…" : "Save prayer settings"}</button>
     </form>
   );
 }

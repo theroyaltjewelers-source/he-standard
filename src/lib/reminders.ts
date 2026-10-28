@@ -3,7 +3,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CalendarEvent, Commitment, Profile, Task } from "./types";
 import { eventReminders, occurrences } from "./scheduling";
 import { formatInZone, localDateString, shiftDate, todayIn, zonedToUtc } from "./time";
-import { actionsFor, type Category } from "./reminder-policy";
+import { actionsFor, CATEGORY_PRIORITY, type Category } from "./reminder-policy";
+import { lifecycleReminders } from "./lifecycle";
 import { PRAYERS, PRAYER_LABEL, prayerTimesFor, prayerWindowEnd, type PrayerConfig } from "./prayer";
 
 /**
@@ -28,11 +29,12 @@ export type Row = {
   actions?: { action: string; title: string }[];
   follow_up_of?: string | null;
   follow_up_index?: number;
+  priority?: number;
 };
 
 export async function insertRows(db: SupabaseClient, rows: Row[]) {
   if (!rows.length) return;
-  const withActions = rows.map((r) => ({ ...r, actions: r.actions ?? actionsFor(r.entity_type) }));
+  const withActions = rows.map((r) => ({ ...r, actions: r.actions ?? actionsFor(r.entity_type), priority: r.priority ?? CATEGORY_PRIORITY[r.category] ?? 2 }));
   const { error } = await db.from("reminders").upsert(withActions, { onConflict: "user_id,dedupe_key", ignoreDuplicates: true });
   if (error) throw new Error(`Could not save reminders: ${error.message}`);
 }
@@ -59,11 +61,24 @@ export function buildEventReminderRows(userId: string, ev: CalendarEvent, timeZo
       offsets: ev.all_day ? [] : ev.reminder_offsets, importance: ev.importance, timeZone, now,
     })) {
       rows.push({
-        user_id: userId, entity_type: "event", entity_id: ev.id, category: "appointments",
+        user_id: userId, entity_type: "event", entity_id: ev.id, category: ev.kind === "workout" ? "fitness" : "appointments",
         dedupe_key: `event:${ev.id}:${o.toISOString()}:${r.key}`,
-        title: r.title, body: r.body, url: `/plan?date=${localDateString(o, timeZone)}`,
+        title: r.title, body: r.body, url: `/today?date=${localDateString(o, timeZone)}#occ-${ev.id}`,
         send_at: r.sendAt.toISOString(), respect_quiet_hours: r.respectQuietHours,
+        priority: ev.importance === "high" ? 1 : 2,
       });
+    }
+    if (!ev.all_day) {
+      const dur = ev.ends_at ? Date.parse(ev.ends_at) - Date.parse(ev.starts_at) : 60 * 60_000;
+      for (const r of lifecycleReminders({ title: ev.title, kind: ev.kind ?? "appointment", level: ev.accountability ?? "light", start: o, end: new Date(o.getTime() + dur), timeZone, now })) {
+        rows.push({
+          user_id: userId, entity_type: "event", entity_id: ev.id, category: ev.kind === "workout" ? "fitness" : "appointments",
+          dedupe_key: `event:${ev.id}:${o.toISOString()}:${r.stage}`,
+          title: r.title, body: r.body, url: `/today?date=${localDateString(o, timeZone)}&occ=${ev.id}.${o.getTime()}#occ-${ev.id}`,
+          send_at: r.sendAt.toISOString(), respect_quiet_hours: r.respectQuietHours,
+          actions: actionsFor("event", r.stage), priority: ev.importance === "high" ? 1 : 2,
+        });
+      }
     }
   }
   return rows;

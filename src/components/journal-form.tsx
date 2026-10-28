@@ -85,7 +85,7 @@ export function JournalForm({ entry, today, initialMode }: { entry?: JournalEntr
       ))}
       {!guided && prompt && <p className="serif border-l-2 border-emerald pl-4 text-lg text-ivory-dim italic">{prompt}</p>}
       {guided && <input type="hidden" name="body" value={finalBody} />}
-      <textarea name={guided ? undefined : "body"} value={body} onChange={(e) => setBody(e.target.value)} required={!guided} className={`field ${guided ? "min-h-28" : "min-h-72"}`} aria-label={guided ? "Anything else" : "Entry"} placeholder={guided ? "Anything else (optional)" : "Write freely."} />
+      <textarea name={guided ? undefined : "body"} value={body} onChange={(e) => setBody(e.target.value)} required={!guided} className={`field reading text-[1.075rem] ${guided ? "min-h-28" : "min-h-72"}`} aria-label={guided ? "Anything else" : "Entry"} placeholder={guided ? "Anything else (optional)" : "Write freely."} />
       <div className="flex flex-wrap items-center gap-3 text-sm">
         {supported && (
           <button type="button" onClick={toggleVoice} className={`btn ${listening ? "btn-primary" : "btn-quiet"}`} aria-pressed={listening}>
@@ -121,7 +121,7 @@ export function JournalForm({ entry, today, initialMode }: { entry?: JournalEntr
       </label>
 
       {state?.error && <p role="alert" className="text-brass">{state.error}</p>}
-      <button className="btn btn-primary w-full" disabled={pending || (guided && !finalBody)}>{pending ? "Saving…" : "Save entry"}</button>
+      <button className="btn btn-primary w-full" disabled={pending || (guided && !finalBody)} data-state={pending ? "loading" : undefined}>{pending ? "Saving…" : "Save entry"}</button>
     </form>
   );
 }

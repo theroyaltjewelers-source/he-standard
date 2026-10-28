@@ -3,6 +3,7 @@
 import { useActionState, useMemo, useState } from "react";
 import { saveEvent, type EventState } from "@/app/actions/events";
 import { humanMinutes } from "@/lib/scheduling";
+import { ACCOUNTABILITY_LEVELS, ACTIVITY_KINDS, type AccountabilityLevel, type ActivityKind } from "@/lib/types";
 
 export interface EventFormValues {
   id?: string;
@@ -20,6 +21,8 @@ export interface EventFormValues {
   recurrence: "none" | "daily" | "weekly" | "monthly";
   recurrence_until: string;
   confirmed: boolean;
+  kind?: ActivityKind;
+  accountability?: AccountabilityLevel;
 }
 
 const OFFSETS = [15, 30, 60, 120, 1440];
@@ -41,6 +44,10 @@ export function EventForm({ initial }: { initial: EventFormValues }) {
   const [allDay, setAllDay] = useState(initial.all_day);
   const [recurrence, setRecurrence] = useState(initial.recurrence);
   const [importance, setImportance] = useState(initial.importance);
+  const [kind, setKind] = useState<ActivityKind>(initial.kind ?? "appointment");
+  const [level, setLevel] = useState<AccountabilityLevel>(initial.accountability ?? "light");
+  const [levelTouched, setLevelTouched] = useState(!!initial.id);
+  const [needsPrep, setNeedsPrep] = useState<"unset" | "yes" | "no">(initial.id ? (initial.prep_minutes || initial.travel_minutes ? "yes" : "no") : "unset");
 
   const plan = useMemo(() => {
     if (!time || allDay) return null;
@@ -50,6 +57,16 @@ export function EventForm({ initial }: { initial: EventFormValues }) {
   return (
     <form action={action} className="space-y-8">
       {initial.id && <input type="hidden" name="id" value={initial.id} />}
+      <fieldset>
+        <legend className="label">Type</legend>
+        <div className="flex flex-wrap gap-2" role="radiogroup">
+          {ACTIVITY_KINDS.map((k) => (
+            <button type="button" role="radio" aria-checked={kind === k.key} key={k.key} className="chip" data-on={kind === k.key}
+              onClick={() => { setKind(k.key); if (!levelTouched) setLevel(k.defaultAccountability); }}>{k.label}</button>
+          ))}
+        </div>
+        <input type="hidden" name="kind" value={kind} />
+      </fieldset>
       <div>
         <label className="label" htmlFor="title">What</label>
         <input id="title" name="title" required maxLength={200} defaultValue={initial.title} className="field" placeholder="e.g. Client consultation" />
@@ -79,9 +96,17 @@ export function EventForm({ initial }: { initial: EventFormValues }) {
       </div>
 
       {!allDay && (
-        <fieldset className="space-y-4 rounded-[14px] border border-line p-4">
+        <fieldset className="space-y-4 rounded-[18px] border border-line p-4">
           <legend className="px-1 h-section">Preparation and travel</legend>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-ivory-dim">Does this need preparation or travel time?</span>
+            <button type="button" className="chip" data-on={needsPrep === "yes"} onClick={() => setNeedsPrep("yes")}>Yes</button>
+            <button type="button" className="chip" data-on={needsPrep === "no"} onClick={() => { setNeedsPrep("no"); setPrep(0); setTravel(0); }}>No</button>
+          </div>
+          {needsPrep === "unset" && <p className="text-sm text-brass">Answer this so departure and preparation reminders are right.</p>}
+          <input type="hidden" name="prep_answered" value={needsPrep === "unset" ? "" : "1"} />
+          {needsPrep === "no" && <><input type="hidden" name="prep_minutes" value={0} /><input type="hidden" name="travel_minutes" value={0} /></>}
+          {needsPrep === "yes" && <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="label" htmlFor="prep">Preparation (min)</label>
               <input id="prep" type="number" min={0} max={600} step={5} name="prep_minutes" value={prep} onChange={(e) => setPrep(Number(e.target.value) || 0)} className="field" />
@@ -90,7 +115,7 @@ export function EventForm({ initial }: { initial: EventFormValues }) {
               <label className="label" htmlFor="travel">Travel (min)</label>
               <input id="travel" type="number" min={0} max={600} step={5} name="travel_minutes" value={travel} onChange={(e) => setTravel(Number(e.target.value) || 0)} className="field" />
             </div>
-          </div>
+          </div>}
           {plan && (
             <ol className="space-y-1 text-[0.95rem]">
               {prep > 0 && <li><span className="inline-block w-28 text-ivory-dim">{plan.prepAt}</span>Start preparing</li>}
@@ -104,6 +129,19 @@ export function EventForm({ initial }: { initial: EventFormValues }) {
               <input type="checkbox" name="confirm_plan" defaultChecked={initial.confirmed} className="size-5 accent-emerald" /> I confirm this plan
             </label>
           )}
+        </fieldset>
+      )}
+
+      {!allDay && (
+        <fieldset className="space-y-2">
+          <legend className="h-section mb-2">Accountability</legend>
+          <p className="text-sm text-ivory-faint">What happens around the start and end. Unanswered check-ins are recorded as awaiting confirmation — never as missed.</p>
+          {ACCOUNTABILITY_LEVELS.map((l) => (
+            <label key={l.key} className={`flex cursor-pointer gap-3 rounded-[14px] border p-3 transition-colors ${level === l.key ? "border-lime" : "border-line hover:border-line-strong"}`}>
+              <input type="radio" name="accountability" value={l.key} checked={level === l.key} onChange={() => { setLevel(l.key); setLevelTouched(true); }} className="mt-1 accent-[var(--color-lime)]" />
+              <span><span className="block">{l.label}</span><span className="block text-sm text-ivory-dim">{l.desc}</span></span>
+            </label>
+          ))}
         </fieldset>
       )}
 
@@ -144,8 +182,15 @@ export function EventForm({ initial }: { initial: EventFormValues }) {
         <textarea id="notes" name="notes" defaultValue={initial.notes} className="field min-h-20" />
       </div>
 
+      {state?.conflicts && state.conflicts.length > 0 && (
+        <div role="alert" className="space-y-2 rounded-[18px] border border-brass/60 bg-brass-deep/40 p-4">
+          <p className="font-medium text-brass">This overlaps with your schedule</p>
+          <ul className="list-disc space-y-1 pl-5 text-sm">{state.conflicts.map((c) => <li key={c}>{c}</li>)}</ul>
+          <label className="flex items-center gap-2 text-sm text-ivory-dim"><input type="checkbox" name="ack_conflicts" className="accent-[var(--color-lime)]" /> Keep it anyway</label>
+        </div>
+      )}
       {state?.error && <p role="alert" className="text-brass">{state.error}</p>}
-      <button className="btn btn-primary w-full" disabled={pending}>{pending ? "Saving…" : initial.id ? "Save changes" : "Add appointment"}</button>
+      <button className="btn btn-primary w-full" disabled={pending} data-state={pending ? "loading" : undefined}>{pending ? "Saving…" : initial.id ? "Save changes" : `Add ${ACTIVITY_KINDS.find((k) => k.key === kind)!.label.toLowerCase()}`}</button>
     </form>
   );
 }

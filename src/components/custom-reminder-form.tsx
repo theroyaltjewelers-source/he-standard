@@ -15,7 +15,7 @@ export function CustomReminderForm({ today }: { today: string }) {
       <label className="flex items-center gap-2 text-sm text-ivory-dim"><input type="checkbox" name="respect_quiet" className="size-4 accent-emerald" /> Hold during quiet hours</label>
       {state?.error && <p role="alert" className="text-sm text-brass">{state.error}</p>}
       {state?.ok && <p role="status" className="text-sm text-emerald">Scheduled.</p>}
-      <button className="btn btn-quiet" disabled={pending}>Schedule reminder</button>
+      <button className="btn btn-quiet" disabled={pending} data-state={pending ? "loading" : undefined}>Schedule reminder</button>
     </form>
   );
 }

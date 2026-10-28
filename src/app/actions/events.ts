@@ -8,9 +8,10 @@ import { cancelFutureReminders, syncEventReminders } from "@/lib/reminders";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { deleteRemote, isConnected, pushEvent } from "@/lib/google";
 import { zonedToUtc } from "@/lib/time";
+import { findConflicts } from "@/lib/conflicts";
 import type { CalendarEvent } from "@/lib/types";
 
-export type EventState = { error?: string } | undefined;
+export type EventState = { error?: string; conflicts?: string[] } | undefined;
 
 const schema = z.object({
   id: z.uuid().or(z.literal("")),
@@ -28,6 +29,8 @@ const schema = z.object({
   recurrence: z.enum(["none", "daily", "weekly", "monthly"]),
   recurrence_until: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).or(z.literal("")),
   confirm_plan: z.boolean(),
+  kind: z.enum(["appointment", "workout", "call", "deadline", "routine", "obligation", "focus_block"]),
+  accountability: z.enum(["off", "light", "standard", "strict"]),
 });
 
 const s = (f: FormData, k: string) => (typeof f.get(k) === "string" ? (f.get(k) as string).trim() : "");
@@ -40,10 +43,12 @@ export async function saveEvent(_: EventState, form: FormData): Promise<EventSta
     notes: s(form, "notes"), importance: s(form, "importance") || "normal", prep_minutes: s(form, "prep_minutes") || 0,
     travel_minutes: s(form, "travel_minutes") || 0, offsets: form.getAll("offsets"), recurrence: s(form, "recurrence") || "none",
     recurrence_until: s(form, "recurrence_until"), confirm_plan: form.get("confirm_plan") === "on",
+    kind: s(form, "kind") || "appointment", accountability: s(form, "accountability") || "light",
   });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
   const d = parsed.data;
   if (!d.all_day && !d.time) return { error: "Set a start time, or mark it all day." };
+  if (!d.all_day && !d.id && !s(form, "prep_answered")) return { error: "Say whether this needs preparation or travel time." };
 
   const starts = zonedToUtc(d.date, d.all_day ? "00:00" : d.time, profile.timezone);
   const ends = d.all_day ? null : new Date(starts.getTime() + d.duration * 60_000);
@@ -54,8 +59,13 @@ export async function saveEvent(_: EventState, form: FormData): Promise<EventSta
     reminder_offsets: d.all_day ? [] : d.offsets, recurrence: d.recurrence,
     recurrence_until: d.recurrence !== "none" && d.recurrence_until ? d.recurrence_until : null,
     plan_confirmed_at: d.confirm_plan ? new Date().toISOString() : null,
+    kind: d.kind, accountability: d.all_day ? "off" : d.accountability,
     ...(d.id ? { sync_status: "pending_push" } : {}),
   };
+  if (!d.all_day && ends && form.get("ack_conflicts") !== "on") {
+    const conflicts = await findConflicts(supabase, starts, ends, profile.timezone, d.id || null, d.prep_minutes + d.travel_minutes);
+    if (conflicts.length) return { conflicts, error: "Resolve the overlap or confirm you want to keep it." };
+  }
   const q = d.id
     ? supabase.from("events").update(row).eq("id", d.id).select("*").single<CalendarEvent>()
     : supabase.from("events").insert(row).select("*").single<CalendarEvent>();

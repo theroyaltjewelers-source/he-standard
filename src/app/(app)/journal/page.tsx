@@ -110,7 +110,7 @@ export default async function Journal({ searchParams }: PageProps<"/journal">) {
                   {e.mood && `, mood ${e.mood}/5`}{e.energy && `, energy ${e.energy}/5`}{e.input_method === "voice" && ", dictated"}
                 </p>
                 {e.title && <p className="serif mt-1 text-lg">{e.title}</p>}
-                <p className="serif mt-1 line-clamp-3 text-ivory-dim">{e.body}</p>
+                <p className="reading mt-1 line-clamp-3 text-ivory-dim">{e.body}</p>
                 {e.tags.length > 0 && <p className="mt-2 text-xs text-ivory-faint capitalize">{e.tags.join(", ")}</p>}
               </Link>
             </li>

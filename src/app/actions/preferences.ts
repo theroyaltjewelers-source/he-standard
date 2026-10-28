@@ -17,6 +17,9 @@ const schema = z.object({
   voice_replies: z.boolean(), haptics: z.boolean(), sounds: z.boolean(),
   midday_checkin_time: z.string().regex(/^\d{2}:\d{2}$/).nullable(),
   weekly_report_day: z.number().int().min(0).max(6),
+  daily_notification_budget: z.number().int().min(1).max(200).nullable(),
+  pause_keeps_prayer: z.boolean(),
+  workout_target_per_week: z.number().int().min(0).max(14).nullable(),
 });
 
 export async function savePreferences(_: PrefState, form: FormData): Promise<PrefState> {
@@ -28,6 +31,9 @@ export async function savePreferences(_: PrefState, form: FormData): Promise<Pre
     voice_replies: form.get("voice_replies") === "on", haptics: form.get("haptics") === "on", sounds: form.get("sounds") === "on",
     midday_checkin_time: form.get("midday_enabled") === "on" ? s(form, "midday_checkin_time") || "13:00" : null,
     weekly_report_day: Number(s(form, "weekly_report_day") || 0),
+    daily_notification_budget: s(form, "daily_notification_budget") ? Number(s(form, "daily_notification_budget")) : null,
+    pause_keeps_prayer: form.get("pause_keeps_prayer") === "on",
+    workout_target_per_week: s(form, "workout_target_per_week") ? Number(s(form, "workout_target_per_week")) : null,
   });
   if (!parsed.success) return { error: parsed.error.issues[0].path.join(".") === "custom_follow_up_minutes" ? "Custom follow-ups: up to five values between 5 and 720 minutes." : parsed.error.issues[0].message };
   if (parsed.data.reminder_intensity === "custom" && parsed.data.custom_follow_up_minutes.length === 0) return { error: "Add at least one custom follow-up time, or choose another intensity." };
@@ -47,4 +53,20 @@ export async function savePreferences(_: PrefState, form: FormData): Promise<Pre
 
   revalidatePath("/", "layout");
   return { ok: true };
+}
+
+/** Temporary pause for all notifications (prayer optionally excepted). hours = 0 resumes. */
+export async function setNotificationPause(hours: number): Promise<{ ok?: true; until?: string | null; error?: string }> {
+  const { supabase, user, profile, today } = await requireUser();
+  let until: string | null = null;
+  if (hours === -1) {
+    // Until 7 AM tomorrow, local time
+    const { zonedToUtc, shiftDate } = await import("@/lib/time");
+    until = zonedToUtc(shiftDate(today, 1), "07:00", profile.timezone).toISOString();
+  } else if (hours > 0) until = new Date(Date.now() + Math.min(hours, 72) * 3600_000).toISOString();
+  const { error } = await supabase.from("user_preferences").upsert({ user_id: user.id, paused_until: until }, { onConflict: "user_id" });
+  if (error) return { error: error.message };
+  revalidatePath("/settings");
+  revalidatePath("/reminders");
+  return { ok: true, until };
 }

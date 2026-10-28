@@ -11,7 +11,7 @@ export function QuickTask({ date, goals = [] }: { date: string; goals?: { id: st
       <input type="hidden" name="scheduled_for" value={date} />
       <div className="flex gap-2">
         <input name="title" required maxLength={200} className="field" placeholder="Add a task" aria-label="New task" />
-        <button className="btn btn-quiet shrink-0" disabled={pending}>Add</button>
+        <button className="btn btn-quiet shrink-0" disabled={pending} data-state={pending ? "loading" : undefined}>Add</button>
       </div>
       <details className="text-sm">
         <summary className="cursor-pointer text-ivory-faint">Deadline, priority, goal</summary>

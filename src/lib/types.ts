@@ -81,6 +81,8 @@ export interface Task {
   evidence: string | null;
   miss_reason: string | null;
   postponed_count: number;
+  original_due_at?: string | null;
+  original_scheduled_for?: string | null;
   created_at: string;
 }
 
@@ -102,6 +104,8 @@ export interface Commitment {
   expected_outcome?: string | null;
   effort_minutes?: number | null;
   first_action?: string | null;
+  original_promised_by?: string | null;
+  reschedule_count?: number;
 }
 
 export interface CalendarEvent {
@@ -126,6 +130,60 @@ export interface CalendarEvent {
   sync_status?: "local" | "synced" | "pending_push" | "conflict" | "error";
   sync_error?: string | null;
   updated_at?: string;
+  kind?: ActivityKind;
+  accountability?: AccountabilityLevel;
+  rescheduled_from?: string | null;
+}
+
+export type ActivityKind = "appointment" | "workout" | "call" | "deadline" | "routine" | "obligation" | "focus_block";
+export type AccountabilityLevel = "off" | "light" | "standard" | "strict";
+export const ACTIVITY_KINDS: { key: ActivityKind; label: string; defaultAccountability: AccountabilityLevel }[] = [
+  { key: "appointment", label: "Appointment", defaultAccountability: "light" },
+  { key: "workout", label: "Workout", defaultAccountability: "standard" },
+  { key: "call", label: "Important call", defaultAccountability: "light" },
+  { key: "deadline", label: "Deadline", defaultAccountability: "standard" },
+  { key: "routine", label: "Personal routine", defaultAccountability: "light" },
+  { key: "obligation", label: "Personal obligation", defaultAccountability: "light" },
+  { key: "focus_block", label: "Focus block", defaultAccountability: "light" },
+];
+export const ACCOUNTABILITY_LEVELS: { key: AccountabilityLevel; label: string; desc: string }[] = [
+  { key: "off", label: "Off", desc: "Reminders only. No check-in afterwards." },
+  { key: "light", label: "Light", desc: "A start reminder and one question afterwards: did it happen?" },
+  { key: "standard", label: "Standard", desc: "Prepare → start → \"did you start?\" → \"did you finish?\" with duration." },
+  { key: "strict", label: "Strict", desc: "Standard, plus one more follow-up if you haven't answered." },
+];
+
+export type OccurrenceStatus = "scheduled" | "started" | "completed" | "completed_late" | "skipped" | "rescheduled" | "excused" | "awaiting_confirmation" | "missed";
+export interface ActivityOccurrence {
+  id: string;
+  event_id: string;
+  occurrence_start: string;
+  occurrence_end: string | null;
+  title: string;
+  kind: ActivityKind;
+  status: OccurrenceStatus;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_minutes: number | null;
+  delay_minutes: number | null;
+  skip_reason: string | null;
+  notes: string | null;
+  rescheduled_to: string | null;
+  evidence: "confirmed" | "self_reported" | "imported" | "unverified";
+  source: string;
+  updated_at: string;
+}
+
+export interface WorkoutLog {
+  id: string;
+  occurrence_id: string | null;
+  performed_on: string;
+  started_at: string | null;
+  duration_minutes: number | null;
+  workout_type: "strength" | "cardio" | "mobility" | "sport" | "recovery" | "other";
+  intensity: number | null;
+  notes: string | null;
+  source: string;
 }
 
 export interface Reminder {
@@ -144,6 +202,7 @@ export interface Reminder {
   send_at: string;
   respect_quiet_hours: boolean;
   status: "scheduled" | "processing" | "sent" | "partial" | "failed" | "cancelled" | "no_device";
+  priority?: number;
   attempts: number;
   last_error: string | null;
   processed_at: string | null;
@@ -236,6 +295,8 @@ export const GOAL_AREAS = [
   { key: "spiritual", label: "Spiritual practice" },
   { key: "attention", label: "Attention control" },
   { key: "character", label: "Character & integrity" },
+  { key: "learning", label: "Learning & reasoning" },
+  { key: "fitness", label: "Fitness" },
   { key: "general", label: "General" },
 ] as const;
 
@@ -252,6 +313,10 @@ export interface UserPreferences {
   sounds: boolean;
   midday_checkin_time: string | null;
   weekly_report_day: number;
+  daily_notification_budget?: number | null;
+  paused_until?: string | null;
+  pause_keeps_prayer?: boolean;
+  workout_target_per_week?: number | null;
 }
 
 export interface FocusSession {

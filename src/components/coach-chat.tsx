@@ -209,7 +209,7 @@ export function CoachChat({ initialConversationId, initialMessages, initialActio
           className="field max-h-40 min-h-[48px] resize-none font-sans text-base" placeholder={listening ? "Listening…" : "Type, or tap the microphone"} aria-label="Message the Coach" disabled={busy} />
         {srSupported && (
           <button type="button" onClick={toggleMic} disabled={busy} aria-pressed={listening} aria-label={listening ? "Stop listening" : "Speak to the Coach"}
-            className={`grid size-12 shrink-0 place-items-center rounded-full border transition-colors ${listening ? "border-emerald bg-emerald text-[var(--on-emerald)]" : "border-line bg-surface"}`}>
+            className={`grid size-12 shrink-0 place-items-center rounded-full border transition-colors ${listening ? "border-lime bg-lime text-[var(--on-lime)]" : "border-line bg-surface"}`}>
             {listening ? <IconStop /> : <IconMic />}
           </button>
         )}

@@ -167,7 +167,7 @@ export default async function Faith({ searchParams }: PageProps<"/faith">) {
         {verse ? (
           <figure className="border-l-2 border-emerald pl-5">
             <p dir="rtl" lang="ar" className="text-right text-[1.6rem] leading-[2.1] text-ivory" style={{ fontFamily: "Amiri, 'Geeza Pro', 'Noto Naskh Arabic', serif" }}>{verse.arabic}</p>
-            <blockquote className="serif mt-4 text-lg leading-relaxed">{verse.translation}</blockquote>
+            <blockquote className="reading mt-4 text-lg leading-relaxed">{verse.translation}</blockquote>
             <figcaption className="mt-3 text-sm text-ivory-faint">
               Quran {verse.surah}:{verse.ayah}{verse.surah_name && ` · ${verse.surah_name}`} · Translation: {verse.translator} ·{" "}
               <a href={quranComUrl(verse.surah, verse.ayah)} target="_blank" rel="noopener noreferrer" className="underline-offset-4 hover:underline">Read in context</a>

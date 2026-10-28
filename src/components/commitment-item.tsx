@@ -75,7 +75,7 @@ export function CommitmentItem({ c, time, overdue, children }: { c: Commitment; 
           )}
           {state?.error && <p role="alert" className="text-sm text-brass">{state.error}</p>}
           <div className="flex gap-2">
-            <button className="btn btn-primary" disabled={pending}>{pending ? "Saving…" : "Record"}</button>
+            <button className="btn btn-primary" disabled={pending} data-state={pending ? "loading" : undefined}>{pending ? "Saving…" : "Record"}</button>
             <button type="button" className="btn btn-quiet" onClick={() => setMode(null)}>Cancel</button>
           </div>
         </form>

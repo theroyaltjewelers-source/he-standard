@@ -17,7 +17,7 @@ export function EveningForm({ initial, openCommitments, adaptive }: { initial: R
       {openCommitments > 0 && !state?.error && (
         <p className="text-sm text-ivory-dim">{openCommitments} commitment{openCommitments > 1 ? "s" : ""} above still need{openCommitments > 1 ? "" : "s"} recording before you can finish.</p>
       )}
-      <button className="btn btn-primary w-full" disabled={pending}>{pending ? "Recording…" : "Finish evening review"}</button>
+      <button className="btn btn-primary w-full" disabled={pending} data-state={pending ? "loading" : undefined}>{pending ? "Recording…" : "Finish evening review"}</button>
     </form>
   );
 }

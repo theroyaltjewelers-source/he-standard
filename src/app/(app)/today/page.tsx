@@ -2,325 +2,282 @@ import Link from "next/link";
 import { requireUser } from "@/lib/session";
 import { hijriDate } from "@/lib/hijri";
 import { eventsBetween, integritySeries } from "@/lib/records";
-import { prepPlan } from "@/lib/scheduling";
-import { dayOfWeek, formatClock, formatInZone, formatLocalDate, shiftDate, weekStart } from "@/lib/time";
-import type { Commitment, DailyPlan, Goal, Habit, HabitLog, JournalEntry, QuranVerse, Task } from "@/lib/types";
+import { formatClock, formatInZone, formatLocalDate, shiftDate, weekStart, dayOfWeek } from "@/lib/time";
+import type { DailyPlan, Habit, HabitLog, QuranVerse, Task } from "@/lib/types";
 import { nextPrayer, PRAYERS, PRAYER_LABEL, prayerTimesFor } from "@/lib/prayer";
 import { prayerConfig, type PrayerSettingsRow } from "@/lib/reminders";
 import { pickIndex } from "@/lib/quran";
+import { buildTimeline } from "@/lib/timeline";
 import { confirmPrayer } from "@/app/actions/faith";
 import { IntegrityPanel } from "@/components/integrity";
-import { CommitmentItem } from "@/components/commitment-item";
 import { TaskItem } from "@/components/task-item";
 import { QuickTask } from "@/components/quick-task";
 import { PushToggle } from "@/components/push-toggle";
+import { CommandCenter } from "@/components/command-center";
 import { getVapidPublicKey } from "@/lib/app-config";
 import { logHabit } from "@/app/actions/goals";
-import { confirmEventPlan } from "@/app/actions/events";
 
 export const metadata = { title: "Today" };
 
+/**
+ * DAILY COMMAND CENTER — mobile-first: what to do now, what's next, prayer,
+ * the Coach, today's accountability, then the full timeline.
+ */
 export default async function Today({ searchParams }: PageProps<"/today">) {
   const sp = await searchParams;
   const { supabase, profile, today } = await requireUser();
   const tz = profile.timezone;
   const now = new Date();
-  const tomorrow = shiftDate(today, 1);
-  const wk = weekStart(today);
+  const date = typeof sp.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.date) ? sp.date : today;
+  const isToday = date === today;
+  const wk = weekStart(date);
 
-  const [plan, commitments, tasks, overdue, habits, habitLogs, sessions, goals, progress, lastEntry, events, series] = await Promise.all([
-    supabase.from("daily_plans").select("*").eq("plan_date", today).maybeSingle<DailyPlan>(),
-    supabase.from("commitments").select("*").eq("commitment_date", today).order("promised_by"),
-    supabase.from("tasks").select("*").eq("scheduled_for", today).neq("status", "cancelled").order("is_top_priority", { ascending: false }).order("priority").order("created_at"),
+  const [{ data: prefs }, { data: plan }, { data: overdue }, { data: habits }, { data: habitLogs }, { data: sessions }, series, { data: prayerSettings }, { data: prayerConf }, { count: verseCount }, { count: pendingMemories }, events, { data: goals }] = await Promise.all([
+    supabase.from("user_preferences").select("midday_checkin_time").maybeSingle(),
+    supabase.from("daily_plans").select("*").eq("plan_date", date).maybeSingle<DailyPlan>(),
     supabase.from("tasks").select("*").lt("scheduled_for", today).eq("status", "pending").order("scheduled_for"),
     supabase.from("habits").select("*").eq("active", true).order("created_at"),
-    supabase.from("habit_logs").select("*").gte("log_date", wk).lte("log_date", today),
-    supabase.from("accountability_sessions").select("kind,status").eq("session_date", today),
-    supabase.from("goals").select("*").eq("status", "active").order("target_date", { nullsFirst: false }).limit(4),
-    supabase.from("goal_progress").select("goal_id,progress_pct,created_at").not("progress_pct", "is", null).order("created_at", { ascending: false }),
-    supabase.from("journal_entries").select("id,entry_date,title").order("created_at", { ascending: false }).limit(1).maybeSingle<Pick<JournalEntry, "id" | "entry_date" | "title">>(),
-    eventsBetween(supabase, today, today, tz),
-    integritySeries(supabase, shiftDate(today, -6), today, today),
-  ]);
-  const [{ data: prayerSettings }, { data: prayerConf }, { count: verseCount }, { data: prefs }, { count: pendingMemories }] = await Promise.all([
+    supabase.from("habit_logs").select("*").gte("log_date", wk).lte("log_date", date),
+    supabase.from("accountability_sessions").select("kind,status").eq("session_date", date),
+    integritySeries(supabase, shiftDate(date, -6), date, today),
     supabase.from("prayer_settings").select("*").maybeSingle<PrayerSettingsRow>(),
-    supabase.from("prayer_confirmations").select("prayer").eq("prayer_date", today),
+    supabase.from("prayer_confirmations").select("prayer").eq("prayer_date", date),
     supabase.from("quran_verses").select("id", { count: "exact", head: true }),
-    supabase.from("user_preferences").select("midday_checkin_time").maybeSingle(),
     supabase.from("ai_memory").select("id", { count: "exact", head: true }).eq("status", "proposed"),
+    eventsBetween(supabase, date, date, tz),
+    supabase.from("goals").select("id,title").eq("status", "active"),
   ]);
+  const middayTime: string | null = prefs ? prefs.midday_checkin_time : "13:00";
+  const timeline = await buildTimeline(supabase, date, tz, profile, middayTime);
   const pcfg = prayerSettings ? prayerConfig(prayerSettings, tz) : null;
-  const prayerToday = pcfg ? prayerTimesFor(today, pcfg) : null;
-  const upcoming = pcfg ? nextPrayer(today, pcfg, now) : null;
+  const prayerToday = pcfg ? prayerTimesFor(date, pcfg) : null;
+  const upcomingPrayer = pcfg && isToday ? nextPrayer(today, pcfg, now) : null;
   const confirmedPrayers = new Set((prayerConf ?? []).map((c) => c.prayer));
   const awaitingConfirm = prayerToday ? PRAYERS.filter((p) => prayerToday[p] <= now && !confirmedPrayers.has(p)) : [];
   const { data: verseRows } = verseCount
-    ? await supabase.from("quran_verses").select("*").order("surah").order("ayah").range(pickIndex(today, profile.id, verseCount), pickIndex(today, profile.id, verseCount))
+    ? await supabase.from("quran_verses").select("*").order("surah").order("ayah").range(pickIndex(date, profile.id, verseCount), pickIndex(date, profile.id, verseCount))
     : { data: [] };
   const verse = (verseRows?.[0] ?? null) as QuranVerse | null;
 
-  const cs = (commitments.data ?? []) as Commitment[];
-  const ts = (tasks.data ?? []) as Task[];
-  const od = (overdue.data ?? []) as Task[];
-  const hs = (habits.data ?? []) as Habit[];
-  const logs = (habitLogs.data ?? []) as HabitLog[];
-  const morningDone = sessions.data?.some((s) => s.kind === "morning" && s.status === "completed");
-  const eveningDone = sessions.data?.some((s) => s.kind === "evening" && s.status === "completed");
-  const middayDone = sessions.data?.some((s) => s.kind === "midday" && s.status === "completed");
-  const middayTime: string | null = prefs ? prefs.midday_checkin_time : "13:00";
+  const od = isToday ? ((overdue ?? []) as Task[]) : [];
+  const hs = (habits ?? []) as Habit[];
+  const logs = (habitLogs ?? []) as HabitLog[];
+  const done = (k: string) => (sessions ?? []).some((s) => s.kind === k && s.status === "completed");
   const todayScore = series[series.length - 1].result;
-  const dailyPlan = plan.data;
-  const latestPct = new Map<string, number>();
-  for (const p of progress.data ?? []) if (!latestPct.has(p.goal_id)) latestPct.set(p.goal_id, p.progress_pct);
-  const dow = dayOfWeek(today);
   const localHour = Number(formatInZone(now, tz, "H"));
+  const dow = dayOfWeek(date);
 
-  // Priorities: morning commitments first; otherwise tasks flagged as priorities.
-  const topTasks = ts.filter((t) => t.is_top_priority);
+  // Now & next
+  const actionable = timeline.items.filter((i) => i.type !== "buffer" && i.type !== "focus" && !i.meta?.allDay);
+  const current = actionable.find((i) => i.state === "active");
+  const nextUp = actionable.find((i) => i.state === "upcoming");
+  const minutesUntil = nextUp ? Math.round((Date.parse(nextUp.start) - now.getTime()) / 60_000) : null;
 
-  // Next steps from the records — rule-based, not AI.
-  const next: { text: string; href: string }[] = [];
-  if (!morningDone && localHour < 15) next.push({ text: "Set today's commitments", href: "/checkin/morning" });
-  const lapsed = cs.filter((c) => c.status === "open" && c.promised_by && Date.parse(c.promised_by) < now.getTime());
-  if (lapsed.length) next.push({ text: `${lapsed.length} commitment${lapsed.length > 1 ? "s are" : " is"} past the promised time — record what happened`, href: "#commitments" });
-  if (od.length) next.push({ text: `${od.length} overdue task${od.length > 1 ? "s" : ""} from earlier days — finish, move, or mark not done`, href: "#tasks" });
-  const stuck = [...ts, ...od].filter((t) => t.status === "pending" && t.postponed_count >= 2);
-  for (const t of stuck.slice(0, 2)) next.push({ text: `“${t.title}” has been postponed ${t.postponed_count} times. What is the obstacle to starting?`, href: "/word" });
-  const unconfirmed = events.filter((o) => o.event.importance === "high" && !o.event.plan_confirmed_at && o.start > now);
-  for (const o of unconfirmed) next.push({ text: `Confirm your preparation plan for ${o.event.title}`, href: "#schedule" });
-  if (middayTime && !middayDone && morningDone && localHour >= Number(middayTime.slice(0, 2)) && localHour < 17) next.push({ text: "Two-minute midday check-in", href: "/checkin/midday" });
-  if (pendingMemories) next.push({ text: `The Coach proposed ${pendingMemories} thing${pendingMemories > 1 ? "s" : ""} to remember — keep or reject`, href: "/settings/memory" });
-  if (!eveningDone && localHour >= 17) next.push({ text: "Complete the evening review", href: "/checkin/evening" });
+  // Evidence-based attention list (rule-based, from records)
+  const attention: { text: string; href: string; why: string }[] = [];
+  if (isToday) {
+    if (!done("morning") && localHour < 15) attention.push({ text: "Set today's priorities", href: "/checkin/morning", why: "No morning plan recorded today." });
+    const awaiting = timeline.items.filter((i) => i.state === "awaiting" && i.type !== "checkin" && i.type !== "prayer");
+    if (awaiting.length) attention.push({ text: `${awaiting.length} item${awaiting.length > 1 ? "s" : ""} awaiting confirmation — record what happened`, href: "#tl-h", why: "Past their time with no outcome recorded. Unknown is never counted as missed." });
+    if (od.length) attention.push({ text: `${od.length} open task${od.length > 1 ? "s" : ""} from earlier days`, href: "#anytime", why: "Scheduled before today and still open." });
+    for (const t of [...timeline.untimedTasks, ...od].filter((t) => t.status === "pending" && t.postponed_count >= 2).slice(0, 2)) {
+      attention.push({ text: `“${t.title}” has been postponed ${t.postponed_count} times. What is the obstacle to starting?`, href: "/word", why: `Postponed ${t.postponed_count}×.` });
+    }
+    for (const o of events.filter((o) => o.event.importance === "high" && !o.event.plan_confirmed_at && o.start > now)) attention.push({ text: `Confirm your preparation plan for ${o.event.title}`, href: `/plan/${o.event.id}`, why: "Important appointment without a confirmed plan." });
+    if (middayTime && !done("midday") && done("morning") && localHour >= Number(middayTime.slice(0, 2)) && localHour < 17) attention.push({ text: "Two-minute midday check-in", href: "/checkin/midday", why: "Midday check-in time has passed." });
+    if (pendingMemories) attention.push({ text: `The Coach proposed ${pendingMemories} thing${pendingMemories > 1 ? "s" : ""} to remember — keep or reject`, href: "/settings/memory", why: "Nothing proposed is used until you approve it." });
+    if (!done("evening") && localHour >= 17) attention.push({ text: "Complete the evening review", href: "/checkin/evening", why: "Evening review not yet recorded." });
+  }
+
+  const greeting = localHour < 12 ? "Good morning" : localHour < 17 ? "Good afternoon" : "Good evening";
 
   return (
-    <div className="space-y-12">
-      <header>
-        <p className="text-ivory-dim">{localHour < 12 ? "Good morning" : localHour < 17 ? "Good afternoon" : "Good evening"}{profile.display_name ? `, ${profile.display_name}` : ""}.</p>
-        <p className="serif mt-1 text-[1.65rem] leading-tight">{formatLocalDate(today, "EEEE, MMMM d")}</p>
-        <p className="mt-1 text-ivory-dim">{hijriDate(today, profile.hijri_adjustment_days)}</p>
-        {sp.welcome && <p className="mt-4 text-sm text-emerald">You&apos;re set up. Start with the morning check-in.</p>}
-        {sp.checkin === "morning" && <p className="mt-4 text-sm text-emerald">Morning commitments recorded. Reminders are set for each.</p>}
-        {sp.checkin === "midday" && <p className="mt-4 text-sm text-emerald">Midday check-in recorded.</p>}
-        {sp.checkin === "evening" && <p className="mt-4 text-sm text-emerald">Evening review recorded.</p>}
+    <div className="bleed space-y-6">
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="text-ivory-dim">{isToday ? `${greeting}${profile.display_name ? `, ${profile.display_name}` : ""}.` : "Viewing another day"}</p>
+          <h1 className="h-page mt-1">{formatLocalDate(date, "EEEE, MMMM d")}</h1>
+          <p className="mt-1 text-sm text-ivory-faint">{hijriDate(date, profile.hijri_adjustment_days)}</p>
+          {sp.welcome && <p className="mt-3 text-sm text-emerald">You&apos;re set up. Start with the morning check-in.</p>}
+          {sp.checkin === "morning" && <p className="mt-3 text-sm text-emerald">Morning commitments recorded. Reminders are set for each.</p>}
+          {sp.checkin === "midday" && <p className="mt-3 text-sm text-emerald">Midday check-in recorded.</p>}
+          {sp.checkin === "evening" && <p className="mt-3 text-sm text-emerald">Evening review recorded.</p>}
+        </div>
+        <nav className="seg" aria-label="Day">
+          <Link href={`/today?date=${shiftDate(date, -1)}`} aria-label="Previous day">‹</Link>
+          <Link href="/today" aria-current={isToday ? "true" : undefined}>Today</Link>
+          <Link href={`/today?date=${shiftDate(date, 1)}`} aria-label="Next day">›</Link>
+        </nav>
       </header>
 
-      <PushToggle vapidKey={await getVapidPublicKey()} compact />
+      <div className="max-w-2xl"><PushToggle vapidKey={await getVapidPublicKey()} compact /></div>
 
-      <IntegrityPanel today={todayScore} series={series} />
-
-      {/* Accountability status */}
-      <section aria-label="Check-ins" className={`grid gap-3 ${middayTime ? "grid-cols-3" : "grid-cols-2"}`}>
-        <CheckinLink href="/checkin/morning" label="Morning" done={!!morningDone} time={formatClock(profile.morning_checkin_time)} />
-        {middayTime && <CheckinLink href="/checkin/midday" label="Midday" done={!!middayDone} time={formatClock(middayTime.slice(0, 5))} />}
-        <CheckinLink href="/checkin/evening" label="Evening" done={!!eveningDone} time={formatClock(profile.evening_checkin_time)} />
-      </section>
-
-      {pcfg && upcoming && (
-        <section aria-labelledby="pr-h" className="rounded-[14px] border border-line p-4">
-          <div className="flex items-baseline justify-between gap-3">
-            <h2 id="pr-h" className="text-sm text-ivory-dim">Next prayer</h2>
-            <Link href="/faith" className="text-sm text-ivory-dim hover:text-ivory">Faith</Link>
-          </div>
-          <p className="serif mt-1 text-2xl">{PRAYER_LABEL[upcoming.prayer]} <span className="text-ivory-dim">at {formatInZone(upcoming.at, tz, "h:mm a")}{upcoming.date !== today ? " tomorrow" : ""}</span></p>
-          {awaitingConfirm.length > 0 && (
-            <div className="mt-3 flex flex-wrap items-center gap-1.5">
-              <span className="mr-1 text-sm text-ivory-faint">Prayed?</span>
-              {awaitingConfirm.map((p) => (
-                <form key={p} action={confirmPrayer}>
-                  <input type="hidden" name="prayer" value={p} />
-                  <input type="hidden" name="date" value={today} />
-                  <button className="chip">{PRAYER_LABEL[p]}</button>
-                </form>
-              ))}
-            </div>
+      <div className="grid gap-4 lg:grid-cols-12">
+        {/* Now & next */}
+        <section aria-label="Now and next" className="card card-feature lg:col-span-7">
+          {current ? (
+            <>
+              <p className="eyebrow">Now</p>
+              <p className="mt-2 text-2xl font-semibold tracking-tight">{current.title}</p>
+              <p className="mt-1 text-sm text-ivory-dim">{formatInZone(current.start, tz, "h:mm a")}{current.end ? `–${formatInZone(current.end, tz, "h:mm a")}` : ""}{current.subtitle ? ` · ${current.subtitle}` : ""}</p>
+              <a href={current.type === "event" ? `#occ-${current.ref}` : "#tl-h"} className="btn btn-primary mt-4">Record progress</a>
+            </>
+          ) : nextUp ? (
+            <>
+              <p className="eyebrow">Next{minutesUntil !== null ? ` · in ${minutesUntil < 60 ? `${minutesUntil} min` : `${Math.floor(minutesUntil / 60)} h ${minutesUntil % 60} min`}` : ""}</p>
+              <p className="mt-2 text-2xl font-semibold tracking-tight">{nextUp.title}</p>
+              <p className="mt-1 text-sm text-ivory-dim">{formatInZone(nextUp.start, tz, "h:mm a")}{nextUp.subtitle ? ` · ${nextUp.subtitle}` : ""}</p>
+              <a href={nextUp.type === "event" ? `#occ-${nextUp.ref}` : "#tl-h"} className="btn btn-quiet mt-4">Open</a>
+            </>
+          ) : (
+            <>
+              <p className="eyebrow">{isToday ? "Clear for now" : "This day"}</p>
+              <p className="mt-2 text-2xl font-semibold tracking-tight">{isToday ? "Nothing else scheduled today." : `${actionable.length} scheduled items`}</p>
+              <Link href={`/plan/new?date=${date}`} className="btn btn-quiet mt-4">Schedule something</Link>
+            </>
           )}
-          <p className="mt-2 text-xs text-ivory-faint">{confirmedPrayers.size} of 5 confirmed today. Unconfirmed is never counted as missed.</p>
+          {plan?.intention && <p className="mt-5 border-l-2 border-lime pl-3 text-ivory">{plan.intention}</p>}
+          {plan?.avoid_behavior && <p className="mt-2 text-sm text-ivory-dim"><span className="text-ivory-faint">Avoiding: </span>{plan.avoid_behavior}</p>}
         </section>
-      )}
-      {!pcfg && (
-        <Link href="/faith" className="block rounded-[14px] border border-dashed border-line p-4 text-sm text-ivory-dim hover:border-ivory-faint">Set your location on Faith to see prayer times and reminders.</Link>
-      )}
 
-      {(dailyPlan?.intention || dailyPlan?.avoid_behavior || dailyPlan?.spiritual_intention) && (
-        <section aria-labelledby="intent-h" className="space-y-4 border-l-2 border-emerald pl-5">
-          <h2 id="intent-h" className="sr-only">Today&apos;s intention</h2>
-          {dailyPlan.intention && <p className="serif text-xl leading-snug">{dailyPlan.intention}</p>}
-          {dailyPlan.avoid_behavior && <p className="text-sm text-ivory-dim"><span className="text-ivory-faint">Avoiding: </span>{dailyPlan.avoid_behavior}</p>}
-          {dailyPlan.spiritual_intention && <p className="text-sm text-ivory-dim"><span className="text-ivory-faint">Spiritual intention: </span>{dailyPlan.spiritual_intention}</p>}
+        {/* Spiritual companion — kept separate from productivity scoring */}
+        <section aria-labelledby="pr-h" className="card card-violet lg:col-span-5">
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 id="pr-h" className="eyebrow">{upcomingPrayer ? "Next prayer" : "Prayer"}</h2>
+            <Link href="/faith" className="text-xs text-ivory-dim hover:text-ivory">Faith</Link>
+          </div>
+          {pcfg ? (
+            <>
+              {upcomingPrayer && <p className="mt-2 text-2xl font-semibold tracking-tight">{PRAYER_LABEL[upcomingPrayer.prayer]} <span className="text-ivory-dim">{formatInZone(upcomingPrayer.at, tz, "h:mm a")}{upcomingPrayer.date !== today ? " tomorrow" : ""}</span></p>}
+              {awaitingConfirm.length > 0 && (
+                <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                  <span className="mr-1 text-sm text-ivory-faint">Prayed?</span>
+                  {awaitingConfirm.map((p) => (
+                    <form key={p} action={confirmPrayer}>
+                      <input type="hidden" name="prayer" value={p} />
+                      <input type="hidden" name="date" value={date} />
+                      <button className="chip">{PRAYER_LABEL[p]}</button>
+                    </form>
+                  ))}
+                </div>
+              )}
+              <p className="mt-3 text-xs text-ivory-faint">{confirmedPrayers.size} of 5 confirmed. Unconfirmed is never counted as missed.</p>
+            </>
+          ) : (
+            <Link href="/faith" className="mt-2 block text-sm text-ivory-dim hover:text-ivory">Set your location on Faith to see prayer times and reminders.</Link>
+          )}
         </section>
-      )}
 
-      {next.length > 0 && (
-        <section aria-labelledby="next-h">
-          <h2 id="next-h" className="h-section mb-3">Needs attention</h2>
-          <ul className="space-y-2">
-            {next.map((n) => (
-              <li key={n.text}>
-                <Link href={n.href} className="block rounded-[10px] bg-surface px-4 py-3 text-[0.95rem] hover:bg-surface-2">{n.text}</Link>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-2 text-xs text-ivory-faint">Generated from your records. <Link href="/coach" className="text-emerald hover:underline">Talk it through with the Coach</Link>.</p>
+        {/* Accountability */}
+        <section aria-label="Check-ins" className={`grid gap-3 lg:col-span-7 ${middayTime ? "grid-cols-3" : "grid-cols-2"}`}>
+          <CheckinLink href="/checkin/morning" label="Morning" done={done("morning")} time={formatClock(profile.morning_checkin_time)} />
+          {middayTime && <CheckinLink href="/checkin/midday" label="Midday" done={done("midday")} time={formatClock(middayTime.slice(0, 5))} />}
+          <CheckinLink href="/checkin/evening" label="Evening" done={done("evening")} time={formatClock(profile.evening_checkin_time)} />
         </section>
-      )}
 
-      <section id="commitments" aria-labelledby="c-h">
-        <div className="flex items-baseline justify-between">
-          <h2 id="c-h" className="h-section">Today&apos;s commitments</h2>
-          <Link href="/checkin/morning" className="text-sm text-ivory-dim hover:text-ivory">{cs.length ? "Revise" : "Set them"}</Link>
+        {/* Coach */}
+        <Link href="/coach" className="card card-hover flex items-center justify-between gap-4 lg:col-span-5">
+          <div>
+            <p className="eyebrow">The Coach</p>
+            <p className="mt-1 font-medium">Plan, reschedule or reflect — by voice or text</p>
+          </div>
+          <span aria-hidden className="grid size-11 shrink-0 place-items-center rounded-full bg-lime text-[var(--on-lime)]">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
+          </span>
+        </Link>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-12">
+        <div className="space-y-6 lg:col-span-7">
+          <CommandCenter items={timeline.items} tz={tz} date={date} nowIso={timeline.now} focusOcc={typeof sp.occ === "string" ? sp.occ : null} focusMode={typeof sp.do === "string" ? sp.do : null} />
+
+          <section id="anytime" aria-labelledby="t-h" className="card scroll-mt-24">
+            <div className="flex items-baseline justify-between">
+              <h2 id="t-h" className="h-section">Anytime today</h2>
+              <Link href="/word" className="text-sm text-ivory-dim hover:text-ivory">All tasks</Link>
+            </div>
+            <ul className="mt-1 divide-y divide-line">
+              {od.map((t) => <TaskItem key={t.id} t={t} overdue dueLabel={null} tomorrow={today} showDate={`from ${formatLocalDate(t.scheduled_for!, "MMM d")}`} />)}
+              {timeline.untimedTasks.map((t) => <TaskItem key={t.id} t={t} tomorrow={shiftDate(date, 1)} dueLabel={null} overdue={false} />)}
+            </ul>
+            {!od.length && !timeline.untimedTasks.length && <p className="py-2 text-sm text-ivory-faint">No untimed tasks.</p>}
+            <div className="mt-3"><QuickTask date={date} goals={goals ?? []} /></div>
+          </section>
         </div>
-        {cs.length ? (
-          <ul className="divide-y divide-line">
-            {cs.map((c) => (
-              <CommitmentItem key={c.id} c={c} time={c.promised_by ? formatInZone(c.promised_by, tz, "h:mm a") : null}
-                overdue={!!c.promised_by && Date.parse(c.promised_by) < now.getTime()} />
-            ))}
-          </ul>
-        ) : topTasks.length ? (
-          <>
-            <p className="mt-2 mb-1 text-sm text-ivory-dim">No commitments yet. Your priority tasks:</p>
-            <ul className="divide-y divide-line">{topTasks.map((t) => <li key={t.id} className="py-2 serif text-lg">{t.title}</li>)}</ul>
-          </>
-        ) : (
-          <p className="mt-3 text-ivory-dim">No commitments for today yet. The morning check-in sets up to three, each with a time.</p>
-        )}
-      </section>
 
-      <section id="schedule" aria-labelledby="s-h">
-        <div className="flex items-baseline justify-between">
-          <h2 id="s-h" className="h-section">Schedule</h2>
-          <Link href={`/plan/new?date=${today}`} className="text-sm text-ivory-dim hover:text-ivory">Add appointment</Link>
-        </div>
-        {events.length ? (
-          <ul className="mt-2 divide-y divide-line">
-            {events.map((o) => {
-              const p = prepPlan(o.start, o.event.prep_minutes, o.event.travel_minutes);
-              return (
-                <li key={o.event.id + o.start.toISOString()} className="flex gap-4 py-3">
-                  <span className="w-16 shrink-0 text-sm text-ivory-dim tabular-nums">{o.event.all_day ? "All day" : formatInZone(o.start, tz, "h:mm a")}</span>
-                  <div className="min-w-0 flex-1">
-                    <Link href={`/plan/${o.event.id}`} className="hover:underline">{o.event.title}</Link>
-                    {(o.event.prep_minutes > 0 || o.event.travel_minutes > 0) && (
-                      <p className="text-sm text-ivory-faint">
-                        {o.event.prep_minutes > 0 && `Start preparing ${formatInZone(p.beginPrepAt, tz, "h:mm a")}. `}
-                        {o.event.travel_minutes > 0 && `Leave by ${formatInZone(p.leaveBy, tz, "h:mm a")}.`}
-                      </p>
-                    )}
-                    {o.event.importance === "high" && !o.event.plan_confirmed_at && o.start > now && (
-                      <form action={confirmEventPlan} className="mt-1">
-                        <input type="hidden" name="id" value={o.event.id} />
-                        <button className="text-sm text-emerald hover:underline">Confirm this plan</button>
+        <aside className="space-y-6 lg:col-span-5">
+          <div className="card"><IntegrityPanel today={todayScore} series={series} /></div>
+
+          {attention.length > 0 && (
+            <section aria-labelledby="next-h" className="card">
+              <h2 id="next-h" className="h-section mb-3">Needs attention</h2>
+              <ul className="space-y-2">
+                {attention.map((n) => (
+                  <li key={n.text}>
+                    <Link href={n.href} className="block rounded-[14px] bg-surface-2 px-4 py-3 text-[0.95rem] transition-colors hover:bg-surface-3">
+                      {n.text}
+                      <span className="mt-0.5 block text-xs text-ivory-faint">Why: {n.why}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-xs text-ivory-faint">Generated from your records. <Link href="/coach" className="text-accent hover:underline">Talk it through with the Coach</Link>.</p>
+            </section>
+          )}
+
+          {hs.length > 0 && (
+            <section aria-labelledby="h-h" className="card">
+              <div className="flex items-baseline justify-between">
+                <h2 id="h-h" className="h-section">Habits</h2>
+                <Link href="/rhythm" className="text-sm text-ivory-dim hover:text-ivory">Manage</Link>
+              </div>
+              <ul className="mt-2 divide-y divide-line">
+                {hs.map((h) => {
+                  const todayLog = logs.find((l) => l.habit_id === h.id && l.log_date === date);
+                  const weekDone = logs.filter((l) => l.habit_id === h.id && l.status === "done").length;
+                  const restDay = h.rest_days.includes(dow);
+                  return (
+                    <li key={h.id} className="flex items-center gap-3 py-3">
+                      <div className="min-w-0 flex-1">
+                        <p>{h.title}</p>
+                        <p className="text-xs text-ivory-faint tabular">{weekDone} of {h.target_per_week} this week{restDay ? ", scheduled rest day" : ""}</p>
+                      </div>
+                      <form action={logHabit} className="flex gap-1.5">
+                        <input type="hidden" name="habit_id" value={h.id} />
+                        <input type="hidden" name="date" value={date} />
+                        <button name="status" value={todayLog?.status === "done" ? "clear" : "done"} className="chip" data-on={todayLog?.status === "done"}>Done</button>
+                        <button name="status" value={todayLog?.status === "rest" ? "clear" : "rest"} className="chip" data-on={todayLog?.status === "rest"}>Rest</button>
                       </form>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        ) : (
-          <p className="mt-2 text-ivory-dim">Nothing scheduled.</p>
-        )}
-      </section>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
 
-      <section id="tasks" aria-labelledby="t-h">
-        <div className="flex items-baseline justify-between">
-          <h2 id="t-h" className="h-section">Checklist</h2>
-          <Link href="/word" className="text-sm text-ivory-dim hover:text-ivory">All tasks</Link>
-        </div>
-        <ul className="mt-1 divide-y divide-line">
-          {od.map((t) => <TaskItem key={t.id} t={t} overdue dueLabel={null} tomorrow={today} showDate={`from ${formatLocalDate(t.scheduled_for!, "MMM d")}`} />)}
-          {ts.map((t) => (
-            <TaskItem key={t.id} t={t} tomorrow={tomorrow}
-              dueLabel={t.due_at ? formatInZone(t.due_at, tz, "h:mm a") : null}
-              overdue={!!t.due_at && Date.parse(t.due_at) < now.getTime()} />
-          ))}
-        </ul>
-        <div className="mt-3"><QuickTask date={today} goals={(goals.data ?? []).map((g: Goal) => ({ id: g.id, title: g.title }))} /></div>
-      </section>
+          {verse && (
+            <section aria-labelledby="v-h" className="card">
+              <h2 id="v-h" className="eyebrow">Verse for today · {verse.surah_name ?? "Surah"} {verse.surah}:{verse.ayah}</h2>
+              <p className="reading mt-2 text-lg leading-relaxed">{verse.translation}</p>
+              <p className="mt-2 text-xs text-ivory-faint">Translation: {verse.translator}. <Link href="/faith#verse" className="text-accent hover:underline">Arabic and reflection</Link></p>
+            </section>
+          )}
 
-      {hs.length > 0 && (
-        <section aria-labelledby="h-h">
-          <div className="flex items-baseline justify-between">
-            <h2 id="h-h" className="h-section">Habits</h2>
-            <Link href="/rhythm" className="text-sm text-ivory-dim hover:text-ivory">Manage</Link>
-          </div>
-          <ul className="mt-2 divide-y divide-line">
-            {hs.map((h) => {
-              const todayLog = logs.find((l) => l.habit_id === h.id && l.log_date === today);
-              const weekDone = logs.filter((l) => l.habit_id === h.id && l.status === "done").length;
-              const restDay = h.rest_days.includes(dow);
-              return (
-                <li key={h.id} className="flex items-center gap-3 py-3">
-                  <div className="min-w-0 flex-1">
-                    <p>{h.title}</p>
-                    <p className="text-xs text-ivory-faint">{weekDone} of {h.target_per_week} this week{restDay ? ", scheduled rest day" : ""}</p>
-                  </div>
-                  <form action={logHabit} className="flex gap-1.5">
-                    <input type="hidden" name="habit_id" value={h.id} />
-                    <button name="status" value={todayLog?.status === "done" ? "clear" : "done"} className="chip" data-on={todayLog?.status === "done"}>Done</button>
-                    <button name="status" value={todayLog?.status === "rest" ? "clear" : "rest"} className="chip" data-on={todayLog?.status === "rest"}>Rest</button>
-                  </form>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      )}
-
-      {(goals.data ?? []).length > 0 && (
-        <section aria-labelledby="g-h">
-          <div className="flex items-baseline justify-between">
-            <h2 id="g-h" className="h-section">Goals</h2>
-            <Link href="/progress" className="text-sm text-ivory-dim hover:text-ivory">All goals</Link>
-          </div>
-          <ul className="mt-3 space-y-4">
-            {(goals.data as Goal[]).map((g) => {
-              const pct = latestPct.get(g.id);
-              return (
-                <li key={g.id}>
-                  <Link href={`/goals/${g.id}`} className="block">
-                    <div className="flex justify-between gap-3 text-[0.95rem]">
-                      <span>{g.title}</span>
-                      <span className="text-ivory-dim tabular-nums">{pct !== undefined ? `${pct}%` : "no progress logged"}</span>
-                    </div>
-                    <div className="mt-2 h-1 rounded-full bg-surface-2">
-                      {pct !== undefined && <div className="h-1 rounded-full bg-emerald" style={{ width: `${pct}%` }} />}
-                    </div>
-                    {g.target_date && <p className="mt-1 text-xs text-ivory-faint">Target {formatLocalDate(g.target_date, "MMM d, yyyy")}</p>}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      )}
-
-      {verse && (
-        <section aria-labelledby="v-h" className="border-l-2 border-brass/70 pl-5">
-          <h2 id="v-h" className="text-sm text-ivory-dim">Verse for today · {verse.surah_name ?? "Surah"} {verse.surah}:{verse.ayah}</h2>
-          <p className="serif mt-2 text-lg leading-relaxed">{verse.translation}</p>
-          <p className="mt-1 text-xs text-ivory-faint">Translation: {verse.translator}. <Link href="/faith#verse" className="text-emerald hover:underline">Arabic and reflection</Link></p>
-        </section>
-      )}
-
-      <section aria-labelledby="j-h" className="flex items-center justify-between gap-4 rounded-[14px] border border-line p-5">
-        <div>
-          <h2 id="j-h" className="h-section">Reflection</h2>
-          <p className="text-sm text-ivory-dim">
-            {lastEntry.data ? `Last entry ${lastEntry.data.entry_date === today ? "today" : formatLocalDate(lastEntry.data.entry_date, "MMM d")}` : "No entries yet."}
-          </p>
-        </div>
-        <Link href="/journal/new" className="btn btn-quiet">Write</Link>
-      </section>
+          <Link href="/progress" className="card card-hover block">
+            <p className="eyebrow">Personal evolution</p>
+            <p className="mt-1 font-medium">See your trends, balance and weekly report →</p>
+          </Link>
+        </aside>
+      </div>
     </div>
   );
 }
 
 function CheckinLink({ href, label, done, time }: { href: string; label: string; done: boolean; time: string }) {
   return (
-    <Link href={href} className={`rounded-[14px] border p-4 ${done ? "border-emerald-deep bg-emerald-deep/25" : "border-line hover:border-ivory-faint"}`}>
-      <p className="text-sm text-ivory-dim">{label} check-in</p>
-      <p className={`mt-1 ${done ? "text-emerald" : ""}`}>{done ? "Complete" : `Due ${time}`}</p>
+    <Link href={href} className={`card card-hover p-3 sm:p-4 ${done ? "card-emerald" : ""}`}>
+      <p className="text-xs text-ivory-dim sm:text-sm">{label}<span className="hidden sm:inline"> check-in</span></p>
+      <p className={`mt-1 text-sm font-medium sm:text-base ${done ? "text-emerald" : ""}`}>{done ? "Complete" : time}</p>
     </Link>
   );
 }

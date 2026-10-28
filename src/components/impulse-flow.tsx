@@ -92,7 +92,7 @@ export function ImpulseFlow() {
           <label className="block text-sm text-ivory-dim">What happens if I act on it?<input name="consequence" className="field mt-1" maxLength={500} /></label>
           <label className="block text-sm text-ivory-dim">What will I do instead, right now?<input name="alternative" className="field mt-1" maxLength={500} placeholder="One action that serves your goals" /></label>
           {state?.error && <p role="alert" className="text-sm text-brass">{state.error}</p>}
-          <div className="flex gap-2"><button className="btn btn-primary flex-1" disabled={pending}>Record and do the alternative</button><button type="button" className="btn btn-quiet" onClick={close}>Close</button></div>
+          <div className="flex gap-2"><button className="btn btn-primary flex-1" disabled={pending} data-state={pending ? "loading" : undefined}>Record and do the alternative</button><button type="button" className="btn btn-quiet" onClick={close}>Close</button></div>
         </form>
       )}
       {step === "logged" && (

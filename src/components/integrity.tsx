@@ -10,7 +10,7 @@ export function IntegrityPanel({ today, series }: { today: IntegrityResult; seri
       <div className="flex items-end justify-between gap-6">
         <div>
           <h2 id="integrity-h" className="text-sm text-ivory-dim">Daily integrity</h2>
-          <p className="serif mt-1 leading-none font-light tracking-tight" style={{ fontSize: "clamp(4.5rem, 18vw, 6.5rem)" }}>
+          <p className="metric mt-1" style={{ fontSize: "clamp(4rem, 16vw, 5.5rem)" }}>
             {today.score === null ? <span className="text-ivory-faint">—</span> : today.score}
           </p>
         </div>

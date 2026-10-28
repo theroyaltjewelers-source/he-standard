@@ -36,7 +36,7 @@ export function LoginForm({ next }: { next: string }) {
       {notice?.error && <p role="alert" className="text-sm text-brass">{notice.error}</p>}
       {notice?.message && <p role="status" className="text-sm text-emerald">{notice.message}</p>}
 
-      <button type="submit" className="btn btn-primary w-full" disabled={pending}>
+      <button type="submit" className="btn btn-primary w-full" disabled={pending} data-state={pending ? "loading" : undefined}>
         {pending ? "One moment…" : mode === "signin" ? "Sign in" : "Create account"}
       </button>
 

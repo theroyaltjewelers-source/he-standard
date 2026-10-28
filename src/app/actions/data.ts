@@ -61,7 +61,7 @@ const CONTENT_TABLES = [
   "ai_memory_sources", "ai_memory", "ai_observations", "weekly_reports",
   "goal_milestones", "prayer_confirmations", "prayer_schedules", "spiritual_logs", "verse_reflections",
   "focus_sessions", "impulse_logs", "financial_entries", "ai_tool_executions", "ai_messages", "ai_conversations",
-  "calendar_sync_state", "audit_logs",
+  "calendar_sync_state", "audit_logs", "workout_logs", "activity_occurrences", "notification_action_log",
 ] as const;
 
 /** Removes every record but keeps the account and settings. */

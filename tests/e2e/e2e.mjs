@@ -49,8 +49,10 @@ page.on("pageerror", (e) => errors.push(e.message));
 page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
 await page.emulateTimezone("America/New_York");
 
-const go = (p) => page.goto(APP + p, { waitUntil: "networkidle2" });
-const text = () => page.evaluate(() => document.body.innerText);
+// Pages stream behind skeletons (loading.tsx); wait until real content replaced them.
+const settle = () => page.waitForFunction(() => !document.querySelector("[aria-busy=true][aria-label^='Loading']"), { timeout: 20000 }).catch(() => {});
+const go = async (p) => { await page.goto(APP + p, { waitUntil: "networkidle2" }); await settle(); };
+const text = async () => { await settle(); return page.evaluate(() => document.body.innerText); };
 const shot = (n) => page.screenshot({ path: `shot-${n}.png`, fullPage: true });
 // DOM click: avoids the fixed mobile nav bar intercepting coordinate clicks.
 const domClick = (selector) => page.$eval(selector, (b) => b.click());
@@ -157,7 +159,7 @@ try {
   ok(/Call the diamond supplier/.test(t), "task created from dashboard");
   const [task] = await q("select * from tasks where user_id=$1", [user.id]);
   // complete with evidence via the inline form
-  const titleBtn = await page.$$("li button.text-left");
+  const titleBtn = await page.$$("#anytime li button.text-left");
   await titleBtn[0].click();
   await page.waitForSelector("input[name=evidence]");
   await page.type("input[name=evidence][placeholder='Evidence (optional)']", "Confirmed price by phone, notes in CRM");
@@ -197,6 +199,9 @@ try {
   const tomorrow = new Date(Date.now() + 86400000).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
   await page.$eval("#date", (el, v) => (el.value = v), tomorrow);
   await page.$eval("#time", (el) => { const s = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set; s.call(el, "20:00"); el.dispatchEvent(new Event("input", { bubbles: true })); });
+  const yesPrep = await page.evaluate(() => { const b = [...document.querySelectorAll("button.chip")].find((x) => x.textContent === "Yes"); b?.click(); return !!b; });
+  ok(yesPrep, "form asks whether preparation/travel is needed (no silent assumption)");
+  await page.waitForSelector("#prep");
   await page.$eval("#prep", (el) => { const s = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set; s.call(el, "30"); el.dispatchEvent(new Event("input", { bubbles: true })); });
   await page.$eval("#travel", (el) => { const s = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set; s.call(el, "25"); el.dispatchEvent(new Event("input", { bubbles: true })); });
   await page.click("label:has(input[type=checkbox]:not([name])) input");
@@ -218,6 +223,7 @@ try {
   await go(`/plan?view=week&date=${tomorrow}`);
   t = await text();
   ok(/Client consultation/.test(t), "week view shows appointment");
+  ok(keys.includes("life-start") && keys.includes("life-done"), "appointment gets a start reminder and a did-it-happen check (light accountability)");
 
   section("6. Journal");
   await go("/journal/new");
@@ -422,6 +428,143 @@ try {
   t = await text();
   ok(/My Word/.test(t) && /Your record, last 14 days/.test(t), "My Word page renders");
 
+  section("8h. v3 — Daily Command Center and activity lifecycle");
+  {
+    // A workout that started 20 minutes ago (standard accountability)
+    const [wk] = await q(`insert into events(user_id,title,starts_at,ends_at,kind,accountability) values ($1,'Gym', now() - interval '20 minutes', now() + interval '40 minutes','workout','standard') returning *`, [user.id]);
+    await go("/today");
+    let tt = await text();
+    ok(/Today's timeline/.test(tt) && /Gym/.test(tt), "timeline lists the workout");
+    ok(/Isha|Fajr|Morning plan|Evening review/.test(tt), "timeline merges check-ins (and prayers when a location is set)");
+    await page.evaluate(() => [...document.querySelectorAll("ol button[aria-expanded]")].find((b) => b.textContent.includes("Gym"))?.click());
+    await page.waitForFunction(() => [...document.querySelectorAll("button.chip")].some((b) => b.textContent === "Start" && !b.disabled));
+    await page.evaluate(() => [...document.querySelectorAll("button.chip")].find((b) => b.textContent === "Start").click());
+    await page.waitForFunction(() => document.body.innerText.includes("Started Gym"), { timeout: 15000 });
+    let [occ] = await q("select * from activity_occurrences where event_id=$1", [wk.id]);
+    ok(occ?.status === "started" && occ.started_at && occ.delay_minutes >= 15, "Start recorded with the real start time and delay", JSON.stringify([occ?.status, occ?.delay_minutes]));
+    await page.waitForFunction(() => { const b = [...document.querySelectorAll("button.chip")].find((x) => x.textContent === "Complete"); return b && !b.disabled; });
+    await page.evaluate(() => [...document.querySelectorAll("button.chip")].find((b) => b.textContent === "Complete").click());
+    await page.waitForSelector("select[aria-label='Workout type']");
+    await page.select("select[aria-label='Workout type']", "strength");
+    await page.type("input[aria-label='Workout minutes']", "50");
+    await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent === "Save workout").click());
+    await page.waitForFunction(() => /Completed Gym/.test(document.body.innerText), { timeout: 15000 });
+    [occ] = await q("select * from activity_occurrences where event_id=$1", [wk.id]);
+    const wl = await q("select * from workout_logs where occurrence_id=$1", [occ.id]);
+    ok(occ.status === "completed_late" && occ.duration_minutes === 50, "completion recorded (late, since it started 20 min after schedule) with duration", JSON.stringify([occ.status, occ.duration_minutes]));
+    ok(wl.length === 1 && wl[0].workout_type === "strength" && wl[0].duration_minutes === 50, "workout log written from the completion");
+    const openLife = await q("select count(*)::int n from reminders where entity_id=$1 and status='scheduled' and dedupe_key like '%life-%'", [wk.id]);
+    ok(openLife[0].n === 0, "remaining lifecycle reminders cancelled once answered");
+
+    // Lifecycle reminders for a future workout created through the form
+    await go("/plan/new");
+    await page.evaluate(() => [...document.querySelectorAll("button.chip")].find((b) => b.textContent === "Workout").click());
+    await fill("#title", "Morning run");
+    const day2 = new Date(Date.now() + 2 * 86400000).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    await page.$eval("#date", (el, v) => (el.value = v), day2);
+    await page.$eval("#time", (el) => { const s2 = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set; s2.call(el, "07:00"); el.dispatchEvent(new Event("input", { bubbles: true })); });
+    await page.evaluate(() => [...document.querySelectorAll("button.chip")].find((b) => b.textContent === "No").click());
+    ok((await page.$eval("input[name=accountability]:checked", (e) => e.value)) === "standard", "Workout defaults to standard accountability");
+    await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2" }), domClick("form button.btn-primary")]);
+    const [run] = await q("select * from events where user_id=$1 and title='Morning run'", [user.id]);
+    const runRem = await q("select dedupe_key, category, priority, actions from reminders where entity_id=$1 order by send_at", [run.id]);
+    const stages = runRem.map((r) => r.dedupe_key.split(":").pop());
+    ok(["life-start", "life-started", "life-done"].every((k) => stages.includes(k)), `workout lifecycle reminders: ${stages.join(", ")}`);
+    ok(runRem.every((r) => r.category === "fitness") && runRem.find((r) => r.dedupe_key.endsWith("life-start")).actions.map((a) => a.action).join() === "start,late", "fitness category and Start now / Running late actions");
+
+    // Notification action: idempotent completion from the lock screen
+    const doneRem = runRem.find((r) => r.dedupe_key.endsWith("life-done"));
+    const [{ id: doneId }] = await q("select id from reminders where user_id=$1 and dedupe_key=$2", [user.id, doneRem.dedupe_key]);
+    const cookies2 = (await page.cookies()).map((c) => `${c.name}=${c.value}`).join("; ");
+    const actBody = JSON.stringify({ reminder_id: doneId, action: "completed", idempotency_key: `test-${doneId}:completed` });
+    const a1 = await (await fetch(`${APP}/api/notifications/action`, { method: "POST", headers: { "Content-Type": "application/json", Cookie: cookies2 }, body: actBody })).json();
+    const a2 = await (await fetch(`${APP}/api/notifications/action`, { method: "POST", headers: { "Content-Type": "application/json", Cookie: cookies2 }, body: actBody })).json();
+    const runLogs = await q("select count(*)::int n from workout_logs where user_id=$1 and occurrence_id in (select id from activity_occurrences where event_id=$2)", [user.id, run.id]);
+    ok(a1.ok && /Completed/.test(a1.result) && a2.duplicate === true && runLogs[0].n === 1, "notification action processed exactly once (idempotency key)", JSON.stringify([a1.result, a2.duplicate, runLogs[0].n]));
+    const skipRes = await (await fetch(`${APP}/api/notifications/action`, { method: "POST", headers: { "Content-Type": "application/json", Cookie: cookies2 }, body: JSON.stringify({ reminder_id: doneId, action: "skip", idempotency_key: `test-${doneId}:skip` }) })).json();
+    ok(/do=skip/.test(skipRes.open ?? ""), "Skip from a notification opens the app to ask for a reason");
+
+    // Reschedule a commitment from the timeline: conflict check, original deadline kept
+    const [conflictEv] = await q(`insert into events(user_id,title,starts_at,ends_at) values ($1,'Supplier meeting', date_trunc('day', now() at time zone 'America/New_York') at time zone 'America/New_York' + interval '1 day 15 hours', date_trunc('day', now() at time zone 'America/New_York') at time zone 'America/New_York' + interval '1 day 16 hours') returning id`, [user.id]);
+    const [com] = await q(`insert into commitments(user_id,commitment_date,title,made_to,promised_by,source) values ($1,(now() at time zone 'America/New_York')::date,'Call Ali back','Ali', now() + interval '2 hours','manual') returning *`, [user.id]);
+    await go("/today");
+    await page.evaluate(() => [...document.querySelectorAll("ol button[aria-expanded]")].find((b) => b.textContent.includes("Call Ali back"))?.click());
+    await page.waitForFunction(() => [...document.querySelectorAll("button.chip")].some((b) => b.textContent === "Reschedule" && !b.disabled));
+    await page.evaluate(() => [...document.querySelectorAll("button.chip")].find((b) => b.textContent === "Reschedule").click());
+    await page.waitForSelector("input[type=datetime-local]");
+    const tomorrowNY = new Date(Date.now() + 86400000).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    await page.$eval("input[type=datetime-local]", (el, v) => { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set; set.call(el, v); el.dispatchEvent(new Event("input", { bubbles: true })); }, `${tomorrowNY}T15:30`);
+    await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent === "Move").click());
+    await page.waitForFunction(() => document.body.innerText.includes("That time overlaps"), { timeout: 15000 });
+    ok(/Supplier meeting/.test(await text()), "conflict detected before the move is saved");
+    let [com2] = await q("select promised_by, original_promised_by from commitments where id=$1", [com.id]);
+    ok(+new Date(com2.promised_by) === +new Date(com.promised_by), "nothing saved while the conflict is unresolved");
+    await page.waitForFunction(() => { const b = [...document.querySelectorAll("button.chip")].find((x) => x.textContent === "Keep it anyway"); return b && !b.disabled; });
+    await page.evaluate(() => [...document.querySelectorAll("button.chip")].find((b) => b.textContent === "Keep it anyway").click());
+    await page.waitForFunction(() => document.body.innerText.includes("original deadline stays on record"), { timeout: 15000 });
+    [com2] = await q("select promised_by, original_promised_by, reschedule_count from commitments where id=$1", [com.id]);
+    ok(+new Date(com2.original_promised_by) === +new Date(com.promised_by) && com2.reschedule_count === 1 && +new Date(com2.promised_by) !== +new Date(com.promised_by), "rescheduled; original deadline preserved");
+    void conflictEv;
+
+    // Drag-and-drop on the day canvas (pointer), with confirmation
+    const [dragEv] = await q(`insert into events(user_id,title,starts_at,ends_at) values ($1,'Drag me', date_trunc('minute', now() + interval '100 minutes'), date_trunc('minute', now() + interval '130 minutes')) returning *`, [user.id]);
+    await go("/today");
+    await page.evaluate(() => [...document.querySelectorAll("[role=tab]")].find((b) => b.textContent === "Day").click());
+    const box = await page.waitForSelector("[aria-label^='Drag me']");
+    await box.evaluate((el) => el.scrollIntoView({ block: "center" }));
+    await new Promise((r) => setTimeout(r, 300));
+    const bb = await box.boundingBox();
+    await page.mouse.move(bb.x + bb.width / 2, bb.y + 8);
+    await page.mouse.down();
+    for (let k = 1; k <= 6; k++) await page.mouse.move(bb.x + bb.width / 2, bb.y + 8 - k * 10);
+    await page.mouse.up();
+    await page.waitForSelector("[role=dialog][aria-label='Confirm move']");
+    await page.waitForFunction(() => !document.querySelector("[role=dialog]")?.textContent.includes("Checking"), { timeout: 10000 });
+    await page.evaluate(() => [...document.querySelectorAll("[role=dialog] button")].find((b) => /^Move/.test(b.textContent)).click());
+    await page.waitForFunction(() => /Moved to/.test(document.body.innerText), { timeout: 15000 });
+    const [dragged] = await q("select starts_at from events where id=$1", [dragEv.id]);
+    const movedMin = (Date.parse(dragged.starts_at) - Date.parse(dragEv.starts_at)) / 60000;
+    const [dragOcc] = await q("select status, rescheduled_to from activity_occurrences where event_id=$1", [dragEv.id]);
+    ok(movedMin === -60, `drag moved the activity in 15-minute steps (${movedMin} min)`);
+    ok(dragOcc?.status === "rescheduled" && dragOcc.rescheduled_to, "original slot kept on record as rescheduled");
+
+    // Planner: unanswered past occurrence → awaiting confirmation (never missed)
+    const [past] = await q(`insert into events(user_id,title,starts_at,ends_at,kind,accountability) values ($1,'Evening walk', now() - interval '6 hours', now() - interval '5 hours','routine','light') returning id`, [user.id]);
+    await fetch(`${APP}/api/cron/plan`, { method: "POST", headers: { Authorization: `Bearer ${CRON}` } });
+    const [pastOcc] = await q("select status from activity_occurrences where event_id=$1", [past.id]);
+    ok(pastOcc?.status === "awaiting_confirmation", "unanswered activity recorded as awaiting confirmation, not missed");
+
+    // Notification controls: budget and pause
+    await q("update user_preferences set daily_notification_budget=1, paused_until=null where user_id=$1", [user.id]);
+    await q("update reminders set status='cancelled' where user_id=$1 and status='scheduled' and send_at <= now() + interval '1 minute'", [user.id]);
+    for (const k of [1, 2, 3]) await q("insert into reminders(user_id,entity_type,title,url,send_at,respect_quiet_hours,priority,category) values($1,'custom',$2,'/today', now() - interval '1 minute', false, 2, 'commitments')", [user.id, `Budget test ${k}`]);
+    const dsum = await (await fetch(`${APP}/api/cron/dispatch`, { method: "POST", headers: { Authorization: `Bearer ${CRON}` } })).json();
+    const held = await q("select count(*)::int n from reminders where user_id=$1 and title like 'Budget test%' and last_error like 'Daily notification budget%'", [user.id]);
+    const notice = await q("select status, priority from reminders where user_id=$1 and dedupe_key like 'budget:%'", [user.id]);
+    ok(held[0].n >= 2 && notice.length === 1 && notice[0].priority === 1, `daily budget holds extra normal reminders and leaves one notice ${JSON.stringify(dsum)}`);
+    await q("update user_preferences set daily_notification_budget=null, paused_until=now() + interval '2 hours' where user_id=$1", [user.id]);
+    await q("insert into reminders(user_id,entity_type,title,url,send_at,respect_quiet_hours,priority,category) values($1,'custom','Paused test','/today', now() - interval '1 minute', false, 2, 'commitments')", [user.id]);
+    await fetch(`${APP}/api/cron/dispatch`, { method: "POST", headers: { Authorization: `Bearer ${CRON}` } });
+    const [paused] = await q("select status, last_error from reminders where user_id=$1 and title='Paused test'", [user.id]);
+    ok(paused.status === "cancelled" && /paused/i.test(paused.last_error), "temporary pause holds reminders and says why");
+    await q("update user_preferences set paused_until=null where user_id=$1", [user.id]);
+    await go("/reminders");
+    tt = await text();
+    ok(/Delivery check/.test(tt) && /History/.test(tt) && /Pause notifications/.test(tt), "reminders page has delivery troubleshooting, history and pause");
+
+    // Personal evolution dashboard
+    await go("/progress");
+    tt = await text();
+    ok(["Personal evolution", "Development balance", "Commitment integrity", "Focus capacity", "Discipline trends", "Weekly execution", "Development categories", "Upcoming commitments", "Goal progress", "Fitness consistency", "Spiritual companion"].every((h) => tt.toLowerCase().includes(h.toLowerCase())), "dashboard shows every section");
+    ok(/policy 2026\.10-1/.test(tt), "scoring policy version shown");
+    ok(/Insufficient data|insufficient/.test(tt), "domains without evidence say insufficient data");
+    // Keep the integrity check below about the morning's commitments only.
+    await q("delete from commitments where id=$1", [com.id]);
+    await go("/progress?period=7d");
+    ok((await page.$eval("nav[aria-label=Period] [aria-current=true]", (e) => e.textContent)) === "7D", "period selector switches to 7 days");
+    await shot("v3-progress");
+  }
+
   section("9. Integrity score");
   await go("/today");
   t = await text();
@@ -445,7 +588,8 @@ try {
   ok(!html.includes(env.SUPABASE_SERVICE_ROLE_KEY) && !html.includes((await q("select value from app_config where key='vapid_private_key'"))[0].value) && !html.includes(CRON), "no server secrets in page HTML");
   const exp = await fetch(`${APP}/api/export`, { headers: { Cookie: cookies } });
   const data = await exp.json();
-  ok(exp.ok && data.journal_entries.length === 2 && data.commitments.length === 2 && data.goals.length === 1 && data.accountability_answers.length > 5, "export contains journal, commitments, goals, answers");
+  if (!(data.workout_logs?.length >= 2 && data.activity_occurrences?.length >= 2)) console.log("    export counts:", data.workout_logs?.length, data.activity_occurrences?.length, data.journal_entries?.length, data.commitments?.length, data.goals?.length);
+  ok(exp.ok && data.journal_entries.length === 2 && data.workout_logs.length >= 2 && data.activity_occurrences.length >= 2 && data.commitments.length === 2 && data.goals.length === 1 && data.accountability_answers.length > 5, "export contains journal, commitments, goals, answers");
   ok(/attachment/.test(exp.headers.get("content-disposition")), "export downloads as a file");
   ok(!JSON.stringify(data).includes(pub), "export omits device push keys");
 

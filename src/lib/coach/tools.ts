@@ -397,6 +397,8 @@ const eventSchema = z.object({
   travel_minutes: z.number().int().min(0).max(600).default(0).describe("Only if the user stated it. Never estimate travel time."),
   importance: z.enum(["normal", "high"]).default("normal"), reminder_minutes_before: z.array(z.number().int().min(1).max(10080)).max(5).default([60]),
   recurrence: z.enum(["none", "daily", "weekly", "monthly"]).default("none"), recurrence_until: date.optional(), notes: z.string().max(2000).optional(),
+  kind: z.enum(["appointment", "workout", "call", "deadline", "routine", "obligation", "focus_block"]).default("appointment").describe("Use workout for gym/runs/training."),
+  accountability: z.enum(["off", "light", "standard", "strict"]).optional().describe("Check-in level. Defaults: workout/deadline standard, others light. Ask the user if unclear for important items."),
 });
 
 const createEvent: ToolDef<typeof eventSchema> = {
@@ -421,6 +423,7 @@ const createEvent: ToolDef<typeof eventSchema> = {
       ends_at: new Date(starts.getTime() + i.duration_minutes * 60_000).toISOString(), importance: i.importance,
       prep_minutes: i.prep_minutes, travel_minutes: i.travel_minutes, reminder_offsets: i.reminder_minutes_before,
       recurrence: i.recurrence, recurrence_until: i.recurrence_until ?? null, plan_confirmed_at: new Date().toISOString(),
+      kind: i.kind, accountability: i.accountability ?? (i.kind === "workout" || i.kind === "deadline" ? "standard" : "light"),
     }).select("*").single<CalendarEvent>();
     if (error) return fail(`Couldn't create the appointment: ${error.message}`);
     await syncEventReminders(ctx.db, ctx.userId, data, ctx.tz);
@@ -817,7 +820,7 @@ const planBlocks: ToolDef = {
   async run(input, ctx) {
     const created: string[] = [];
     for (const b of (input as { blocks: { title: string; date: string; start_time: string; duration_minutes: number }[] }).blocks) {
-      const r = await createEvent.run({ ...b, prep_minutes: 0, travel_minutes: 0, importance: "normal", reminder_minutes_before: [10], recurrence: "none" }, ctx);
+      const r = await createEvent.run({ ...b, prep_minutes: 0, travel_minutes: 0, importance: "normal", reminder_minutes_before: [10], recurrence: "none", kind: "focus_block", accountability: "light" }, ctx);
       if (!r.ok) return fail(`Created ${created.length}, then failed on “${b.title}”: ${r.summary}`, { created });
       created.push((r.result.event as { id: string }).id);
     }
@@ -886,7 +889,80 @@ const getVerses: ToolDef = {
   },
 };
 
+/* ----------------------------- activity lifecycle ----------------------------- */
+
+const recordActivity: ToolDef = {
+  name: "record_activity",
+  description: "Record what happened with a scheduled activity today or yesterday (e.g. 'I finished my workout', 'I started the call', 'skip gym today because my knee hurts', 'running 15 min late'). Matches by description; if several match, the result lists them — ask which. Skips need a reason from the user. Report exactly what the result says.",
+  schema: z.object({ query: z.string().min(1).max(200), outcome: z.enum(["start", "complete", "late", "skip"]), reason: z.string().max(500).optional(), duration_minutes: z.number().int().min(1).max(600).optional(), minutes_late: z.number().int().min(5).max(180).optional() }),
+  kind: "write",
+  async run(input, ctx) {
+    const i = input as { query: string; outcome: "start" | "complete" | "late" | "skip"; reason?: string; duration_minutes?: number; minutes_late?: number };
+    if (i.outcome === "skip" && !i.reason?.trim()) return fail("Ask the user for a short reason before recording a skip.");
+    const occs = await eventsBetween(ctx.db, shiftDate(ctx.today, -1), ctx.today, ctx.tz);
+    const now = Date.now();
+    const candidates = occs.filter((o) => !o.event.all_day && o.start.getTime() <= now + 2 * 3600_000);
+    const r = resolve(i.query, candidates, (o) => o.event.title);
+    if (r.kind === "none") return fail(`No scheduled activity today matches “${i.query}”.`, { scheduled_today: candidates.map((o) => ({ title: o.event.title, at: fmt(o.start, ctx.tz, "h:mm a") })) });
+    let pickOcc = r.kind === "one" ? r.item : null;
+    if (r.kind === "many") {
+      const sameEvent = new Set(r.items.map((o) => o.event.id));
+      if (sameEvent.size === 1) pickOcc = r.items.sort((a, b) => Math.abs(+a.start - now) - Math.abs(+b.start - now))[0];
+      else return { ok: false, summary: "Several activities match", result: { ambiguous: true, matches: r.items.map((o) => ({ title: o.event.title, at: fmt(o.start, ctx.tz) })) } };
+    }
+    const o = pickOcc!;
+    const { applyOccurrenceAction } = await import("../occurrences");
+    const action = i.outcome === "complete" ? { type: "complete" as const, durationMinutes: i.duration_minutes } : i.outcome === "late" ? { type: "late" as const, minutes: i.minutes_late } : i.outcome === "skip" ? { type: "skip" as const, reason: i.reason! } : { type: "start" as const };
+    try {
+      const out = await applyOccurrenceAction(ctx.db, ctx.userId, o.event, o.start, action, "coach", ctx.tz);
+      await audit(ctx, `activity.${i.outcome}`, "event", o.event.id, { occurrence: o.start.toISOString() });
+      return ok(out.message, { activity: o.event.title, scheduled: fmt(o.start, ctx.tz), status: out.occurrence.status, duration_minutes: out.occurrence.duration_minutes },
+        { undo: { tool: "reopen_activity", input: { event_id: o.event.id, start: o.start.toISOString() } }, entity: { type: "event", id: o.event.id } });
+    } catch (e) {
+      return fail((e as Error).message);
+    }
+  },
+};
+
+const reopenActivity: ToolDef = {
+  name: "reopen_activity",
+  description: "Undo a recorded activity outcome (internal).",
+  schema: z.object({ event_id: z.uuid(), start: z.string() }),
+  kind: "write",
+  async run(input, ctx) {
+    const i = input as { event_id: string; start: string };
+    const { data: ev } = await ctx.db.from("events").select("*").eq("id", i.event_id).maybeSingle<CalendarEvent>();
+    if (!ev) return fail("Activity not found.");
+    const { applyOccurrenceAction } = await import("../occurrences");
+    const out = await applyOccurrenceAction(ctx.db, ctx.userId, ev, new Date(i.start), { type: "reopen" }, "coach", ctx.tz);
+    return ok(`Reopened ${ev.title}`, { status: out.occurrence.status });
+  },
+};
+
+const getScores: ToolDef = {
+  name: "get_scores",
+  description: "The deterministic personal-development scores for a period (7d, 30d, 90d): overall, each domain, every metric with numerator/denominator, exclusions and evidence. Use to EXPLAIN scores. You cannot change or invent scores; say 'insufficient data' when the result does.",
+  schema: z.object({ period: z.enum(["7d", "30d", "90d"]).default("30d") }),
+  kind: "read",
+  async run(input, ctx) {
+    const i = input as { period: "7d" | "30d" | "90d" };
+    const days = i.period === "7d" ? 7 : i.period === "90d" ? 90 : 30;
+    const { data: prof } = await ctx.db.from("profiles").select("created_at").eq("id", ctx.userId).single();
+    const { computeScores } = await import("../scoring");
+    const { loadScoringInput } = await import("../scoring/load");
+    const from = shiftDate(ctx.today, -(days - 1));
+    const inputData = await loadScoringInput(ctx.db, { from, today: ctx.today, tz: ctx.tz, since: localDateString(new Date(prof?.created_at ?? Date.now()), ctx.tz) });
+    const r = computeScores({ ...inputData, from, to: ctx.today });
+    return ok("Scores", {
+      policy: r.policyVersion, period: `${r.from} to ${r.to}`, overall: r.overall ?? "insufficient data", weight_covered: r.coverageWeight,
+      excluded: r.excluded, domains: r.domains.map((d) => ({ domain: d.label, score: d.score ?? "insufficient data", weight: d.weight, metrics: d.metrics.map((m) => ({ metric: m.label, value: m.value === null ? "insufficient" : Math.round(m.value * 100), numerator: m.numerator, denominator: m.denominator, unknown_not_counted: m.unknown, excluded: m.excluded })) })),
+      note: "Scores measure recorded behaviour only — not worth, intelligence or faith.",
+    });
+  },
+};
+
 export const TOOLS: ToolDef[] = [
+  recordActivity, reopenActivity, getScores,
   getVerses,
   getToday, listTasks, createTask, updateTask, completeItem, reopenItem, restoreTask, deleteTask,
   createCommitment, deleteCommitment, resolveCommitment, listEvents, checkAvailability, createEvent,
@@ -896,7 +972,7 @@ export const TOOLS: ToolDef[] = [
 ];
 
 /** Tools only used internally for undo; not offered to the model. */
-const INTERNAL = new Set(["reopen_item", "restore_task", "archive_goal", "unconfirm_prayer", "delete_events"]);
+const INTERNAL = new Set(["reopen_item", "restore_task", "archive_goal", "unconfirm_prayer", "delete_events", "reopen_activity"]);
 export const MODEL_TOOLS = TOOLS.filter((t) => !INTERNAL.has(t.name));
 export const toolByName = (n: string) => TOOLS.find((t) => t.name === n);
 

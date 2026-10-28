@@ -102,9 +102,35 @@ function buildFilter(table, col, raw, params, types) {
 
 const RESERVED = new Set(["select", "order", "limit", "offset", "on_conflict", "columns"]);
 
+/* or=(a.eq.1,and(b.gte.2,b.lt.3)) — PostgREST logical trees */
+function splitTop(s) {
+  const out = []; let depth = 0, cur = "";
+  for (const ch of s) {
+    if (ch === "(") depth++;
+    if (ch === ")") depth--;
+    if (ch === "," && depth === 0) { out.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+function logic(table, op, inner, params, types) {
+  const terms = splitTop(inner).map((t) => {
+    const m = t.match(/^(not\.)?(and|or)\((.*)\)$/);
+    if (m) return (m[1] ? "not " : "") + logic(table, m[2], m[3], params, types);
+    const dot = t.indexOf(".");
+    return buildFilter(table, t.slice(0, dot), t.slice(dot + 1), params, types);
+  });
+  return `(${terms.join(op === "or" ? " or " : " and ")})`;
+}
+
 function where(table, url, params, types) {
   const parts = [];
-  for (const [k, v] of url.searchParams) if (!RESERVED.has(k)) parts.push(buildFilter(table, k, v, params, types));
+  for (const [k, v] of url.searchParams) {
+    if (RESERVED.has(k)) continue;
+    if (k === "or" || k === "and") { parts.push(logic(table, k, v.replace(/^\(|\)$/g, ""), params, types)); continue; }
+    parts.push(buildFilter(table, k, v, params, types));
+  }
   return parts.length ? ` where ${parts.join(" and ")}` : "";
 }
 function selectList(sel, types) {

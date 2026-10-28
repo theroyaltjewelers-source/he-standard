@@ -59,7 +59,7 @@ export function GoalForm({ goal, parents }: { goal?: Goal; parents: { id: string
         <textarea id="recovery_plan" name="recovery_plan" defaultValue={goal?.recovery_plan ?? ""} className="field min-h-20" placeholder="When I miss, the next thing I do is…" />
       </div>
       {state?.error && <p role="alert" className="text-brass">{state.error}</p>}
-      <button className="btn btn-primary w-full" disabled={pending}>{pending ? "Saving…" : goal ? "Save goal" : "Create goal"}</button>
+      <button className="btn btn-primary w-full" disabled={pending} data-state={pending ? "loading" : undefined}>{pending ? "Saving…" : goal ? "Save goal" : "Create goal"}</button>
     </form>
   );
 }
@@ -76,7 +76,7 @@ export function ProgressForm({ goalId }: { goalId: string }) {
       </div>
       {state?.error && <p role="alert" className="text-sm text-brass">{state.error}</p>}
       {state?.ok && <p role="status" className="text-sm text-emerald">Logged.</p>}
-      <button className="btn btn-quiet" disabled={pending}>Log progress</button>
+      <button className="btn btn-quiet" disabled={pending} data-state={pending ? "loading" : undefined}>Log progress</button>
     </form>
   );
 }
@@ -112,7 +112,7 @@ export function HabitForm({ goals }: { goals: { id: string; title: string }[] })
         </div>
       </fieldset>
       {state?.error && <p role="alert" className="text-sm text-brass">{state.error}</p>}
-      <button className="btn btn-quiet" disabled={pending}>Add habit</button>
+      <button className="btn btn-quiet" disabled={pending} data-state={pending ? "loading" : undefined}>Add habit</button>
     </form>
   );
 }

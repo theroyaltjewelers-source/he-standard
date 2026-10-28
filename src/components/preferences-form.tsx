@@ -1,5 +1,7 @@
 "use client";
 
+import { SubmitButton } from "@/components/submit-button";
+
 import { useActionState, useState } from "react";
 import { savePreferences, type PrefState } from "@/app/actions/preferences";
 import { CATEGORIES, INTENSITY_LABEL, categorySetting, type Intensity } from "@/lib/reminder-policy";
@@ -8,7 +10,7 @@ import type { UserPreferences } from "@/lib/types";
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export function PreferencesForm({ prefs }: { prefs: UserPreferences | null }) {
-  const [state, action, pending] = useActionState<PrefState, FormData>(savePreferences, undefined);
+  const [state, action] = useActionState<PrefState, FormData>(savePreferences, undefined);
   const [intensity, setIntensity] = useState<Intensity>(prefs?.reminder_intensity ?? "balanced");
   const [theme, setTheme] = useState(prefs?.theme ?? "dark");
   const [midday, setMidday] = useState(prefs ? prefs.midday_checkin_time !== null : true);
@@ -56,6 +58,29 @@ export function PreferencesForm({ prefs }: { prefs: UserPreferences | null }) {
         )}
       </fieldset>
 
+      <fieldset className="space-y-3">
+        <legend className="h-section mb-2">Notification limits</legend>
+        <label className="block text-sm text-ivory-dim">Daily budget
+          <select name="daily_notification_budget" defaultValue={prefs?.daily_notification_budget ?? ""} className="field mt-1 max-w-56">
+            <option value="">No limit</option>
+            {[5, 8, 12, 16, 20, 30].map((n) => <option key={n} value={n}>{n} per day</option>)}
+          </select>
+          <span className="mt-1 block text-ivory-faint">Critical reminders (prayer, important appointments) always go out. Others stop once the budget is used, and you get one notice that they were held back.</span>
+        </label>
+        <label className="flex items-center gap-2"><input type="checkbox" name="pause_keeps_prayer" defaultChecked={prefs?.pause_keeps_prayer ?? true} className="accent-[var(--color-lime)]" /> Prayer reminders continue while notifications are paused</label>
+      </fieldset>
+
+      <fieldset className="space-y-3">
+        <legend className="h-section mb-2">Fitness</legend>
+        <label className="block text-sm text-ivory-dim">Training target
+          <select name="workout_target_per_week" defaultValue={prefs?.workout_target_per_week ?? ""} className="field mt-1 max-w-56">
+            <option value="">Not set</option>
+            {[1, 2, 3, 4, 5, 6, 7].map((n) => <option key={n} value={n}>{n}× per week</option>)}
+          </select>
+          <span className="mt-1 block text-ivory-faint">Used for Fitness Consistency. Without a target, only scheduled workouts are measured.</span>
+        </label>
+      </fieldset>
+
       <fieldset className="space-y-2">
         <legend className="h-section mb-2">Notification categories</legend>
         <p className="mb-2 text-sm text-ivory-faint">&ldquo;Quiet hours&rdquo; lets a category through during the quiet hours set above.</p>
@@ -79,7 +104,7 @@ export function PreferencesForm({ prefs }: { prefs: UserPreferences | null }) {
 
       {state?.error && <p role="alert" className="text-brass">{state.error}</p>}
       {state?.ok && <p role="status" className="text-emerald">Preferences saved.</p>}
-      <button className="btn btn-primary" disabled={pending}>{pending ? "Saving…" : "Save preferences"}</button>
+      <SubmitButton result={state}>Save preferences</SubmitButton>
     </form>
   );
 }

@@ -14,7 +14,7 @@ export function MiddayForm({ initial }: { initial: Record<string, string> }) {
         <QuestionField key={q.key} q={q} index={i + 1} value={v(q.key)} followUp={state?.followUps?.[q.key]} followUpValue={v(`fu_${q.key}`)} skipped={v(`skip_${q.key}`) === "on"} />
       ))}
       {state?.error && <p role="alert" className="text-brass">{state.error}</p>}
-      <button className="btn btn-primary w-full" disabled={pending}>{pending ? "Recording…" : "Record midday check-in"}</button>
+      <button className="btn btn-primary w-full" disabled={pending} data-state={pending ? "loading" : undefined}>{pending ? "Recording…" : "Record midday check-in"}</button>
     </form>
   );
 }

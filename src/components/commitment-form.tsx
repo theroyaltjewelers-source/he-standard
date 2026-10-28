@@ -23,7 +23,7 @@ export function CommitmentForm({ date }: { date: string }) {
       </div>
       {state?.error && <p role="alert" className="text-sm text-brass">{state.error}</p>}
       <div className="flex gap-2">
-        <button className="btn btn-primary flex-1" disabled={pending}>{pending ? "Recording…" : "Put it on record"}</button>
+        <button className="btn btn-primary flex-1" disabled={pending} data-state={pending ? "loading" : undefined}>{pending ? "Recording…" : "Put it on record"}</button>
         <button type="button" className="btn btn-quiet" onClick={() => setOpen(false)}>Cancel</button>
       </div>
     </form>

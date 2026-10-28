@@ -55,7 +55,7 @@ export function Nav() {
                 <Link href={href} aria-current={active ? "page" : undefined}
                   className="flex min-h-[60px] flex-col items-center justify-center gap-1 text-[11px] text-ivory-faint aria-[current=page]:text-ivory">
                   {center ? (
-                    <span className={`-mt-5 grid size-12 place-items-center rounded-full border ${active ? "border-emerald bg-emerald text-[var(--on-emerald)]" : "border-line bg-surface text-ivory"}`}>
+                    <span className={`-mt-5 grid size-12 place-items-center rounded-full border ${active ? "border-lime bg-lime text-[var(--on-lime)]" : "border-line bg-surface text-ivory"}`}>
                       <Icon />
                     </span>
                   ) : (

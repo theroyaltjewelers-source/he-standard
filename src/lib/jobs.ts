@@ -5,6 +5,7 @@ import { categorySetting } from "./reminder-policy";
 import { importVerses, pickIndex } from "./quran";
 import { isConnected, pullChanges } from "./google";
 import { generateWeeklyReport } from "./weekly";
+import { sweepOccurrences } from "./occurrences";
 import { dayOfWeek, formatInZone, shiftDate, todayIn, zonedToUtc } from "./time";
 import type { CalendarEvent, UserPreferences } from "./types";
 
@@ -14,7 +15,7 @@ import type { CalendarEvent, UserPreferences } from "./types";
  * by week, and Google sync uses sync tokens.
  */
 export async function planAllUsers(admin: SupabaseClient, now = new Date()) {
-  const summary = { users: 0, reminders_considered: 0, google_synced: 0, reports: 0, verses: null as null | object, retention: null as unknown, errors: [] as string[] };
+  const summary = { users: 0, reminders_considered: 0, google_synced: 0, reports: 0, occurrences: 0, awaiting_confirmation: 0, verses: null as null | object, retention: null as unknown, errors: [] as string[] };
 
   try {
     const { count } = await admin.from("quran_verses").select("id", { count: "exact", head: true });
@@ -74,6 +75,14 @@ export async function planAllUsers(admin: SupabaseClient, now = new Date()) {
       await insertRows(admin, rows);
       summary.reminders_considered += rows.length;
 
+      // Activity lifecycle: create records for accountable occurrences that
+      // have started; unanswered ones become "awaiting confirmation".
+      try {
+        const sw = await sweepOccurrences(admin, p.id, tz, now);
+        summary.occurrences += sw.considered;
+        summary.awaiting_confirmation += sw.awaiting;
+      } catch (e) { summary.errors.push(`occurrences ${p.id.slice(0, 8)}: ${(e as Error).message}`); }
+
       // Google Calendar pull
       if (await isConnected(admin, p.id)) {
         try {
@@ -111,6 +120,10 @@ export async function planAllUsers(admin: SupabaseClient, now = new Date()) {
     }
   }
 
-  try { summary.retention = (await admin.rpc("apply_retention")).data; } catch (e) { summary.errors.push(`retention: ${(e as Error).message}`); }
+  try {
+    const base = (await admin.rpc("apply_retention")).data as Record<string, number> | null;
+    const v3 = (await admin.rpc("apply_retention_v3")).data as number | null;
+    summary.retention = { ...(base ?? {}), action_log: v3 ?? 0 };
+  } catch (e) { summary.errors.push(`retention: ${(e as Error).message}`); }
   return summary;
 }

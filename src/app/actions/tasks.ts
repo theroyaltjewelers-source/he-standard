@@ -68,6 +68,24 @@ export async function completeTask(form: FormData) {
   refresh();
 }
 
+/**
+ * Checklist toggle used by the interactive checkbox. Returns only after the
+ * database has confirmed the change, so the UI never shows a completion that
+ * wasn't saved.
+ */
+export async function setTaskDone(id: string, done: boolean): Promise<{ ok?: true; error?: string }> {
+  const { supabase, user, profile } = await requireUser();
+  const patch = done
+    ? { status: "done", completed_at: new Date().toISOString(), verification: "self_reported", miss_reason: null }
+    : { status: "pending", completed_at: null, verification: "none", evidence: null, miss_reason: null };
+  const { data, error } = await supabase.from("tasks").update(patch).eq("id", id).select("*").maybeSingle<Task>();
+  if (error) return { error: error.message };
+  if (!data) return { error: "That task no longer exists." };
+  await syncTaskReminders(supabase, user.id, data, profile.timezone);
+  refresh();
+  return { ok: true };
+}
+
 export async function missTask(form: FormData) {
   const { supabase, user, profile } = await requireUser();
   const { data } = await supabase.from("tasks").update({
