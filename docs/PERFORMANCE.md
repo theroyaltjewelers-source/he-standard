@@ -30,6 +30,11 @@ were not available for this release.
 6. **Page entrance animation** was 280 ms from fully transparent on every navigation; now 180 ms
    from 35 % opacity, so content is visible immediately.
 
+7. **Server and database on opposite coasts (production).** Vercel ran the app's functions in
+   `iad1` (Washington, DC) while the Supabase database is in `us-west-2` (Oregon), so every query
+   paid a cross-country round trip. `vercel.json` now pins functions to `pdx1` (Portland), next to
+   the database.
+
 ## Results (ms, lower is better)
 
 | Route | Full load before | after | In-app nav before | after |
