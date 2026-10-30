@@ -1,6 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Long journal entries are sent through a Server Action. The default 1 MB
+  // request limit is raised so an entry at the 1,000,000-character cap (plus
+  // the other form fields) always fits. Vercel itself accepts up to 4.5 MB.
+  experimental: {
+    serverActions: { bodySizeLimit: "4mb" },
+  },
   // Every page in this app is private and per-user, so Cache Components /
   // partial prerendering are left off: all pages render on request.
   turbopack: {

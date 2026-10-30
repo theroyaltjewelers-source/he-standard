@@ -8,14 +8,15 @@ import Anthropic from "@anthropic-ai/sdk";
 import { JOURNAL_TAGS, type JournalEntry } from "@/lib/types";
 import { GUIDED_MODES } from "@/lib/reflection";
 import { env } from "@/lib/env";
+import { JOURNAL_MAX_CHARS } from "@/lib/journal-limits";
 
-export type JournalState = { error?: string } | undefined;
+export type JournalState = { error?: string; savedId?: string } | undefined;
 const s = (f: FormData, k: string) => (typeof f.get(k) === "string" ? (f.get(k) as string).trim() : "");
 
 const schema = z.object({
   id: z.uuid().or(z.literal("")),
   title: z.string().max(200),
-  body: z.string().min(1, "Write something first.").max(50000),
+  body: z.string().min(1, "Write something first.").max(JOURNAL_MAX_CHARS, "This entry is longer than 1,000,000 characters. Split it into two entries — your text is still here."),
   entry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   mood: z.coerce.number().int().min(1).max(5).nullable(),
   energy: z.coerce.number().int().min(1).max(5).nullable(),
@@ -37,13 +38,25 @@ export async function saveJournal(_: JournalState, form: FormData): Promise<Jour
   if (!parsed.success) return { error: parsed.error.issues[0].message };
   const { id, ...d } = parsed.data;
   const row = { ...d, title: d.title || null, user_id: user.id };
-  const { data, error } = id
-    ? await supabase.from("journal_entries").update(row).eq("id", id).select("id").single()
-    : await supabase.from("journal_entries").insert(row).select("id").single();
-  if (error) return { error: error.message };
-  revalidatePath("/journal");
-  revalidatePath("/today");
-  redirect(`/journal/${data.id}`);
+  try {
+    const { data, error } = id
+      ? await supabase.from("journal_entries").update(row).eq("id", id).select("id").single()
+      : await supabase.from("journal_entries").insert(row).select("id").single();
+    if (error) {
+      console.error("saveJournal", error.code, error.message);
+      const tooLong = error.code === "23514" && /body/.test(error.message);
+      return { error: tooLong
+        ? "The server couldn't accept an entry this long yet. Your text is safe on this device — nothing was lost."
+        : "Couldn't save just now. Your text is safe on this device — try Save again." };
+    }
+    revalidatePath("/journal");
+    revalidatePath("/today");
+    // The form navigates to the entry itself, after clearing its local draft.
+    return { savedId: data.id };
+  } catch (err) {
+    console.error("saveJournal", err);
+    return { error: "Couldn't reach the server. Your text is safe on this device — try Save again." };
+  }
 }
 
 export async function deleteJournal(form: FormData) {
